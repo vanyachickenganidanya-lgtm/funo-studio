@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "name": "hello",
+  "version": "1.0.0",
+  "entry": "lib.fun",
+  "files": {
+    "lib.fun": "lib hello\n\npublic fun greet(name) = \"Привет, \" + name\n"
+  }
+}
