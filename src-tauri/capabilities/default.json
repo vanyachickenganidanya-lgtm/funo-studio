@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Базовые возможности главного окна Funo Studio",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
