@@ -31,7 +31,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "category": "DeveloperTool",
     "shortDescription": "Редактор и JVM-компилятор языка Funo",
     "longDescription": "Быстрый редактор Funo с нативными backend-ами, плагинами и Minecraft-инструментами.",
