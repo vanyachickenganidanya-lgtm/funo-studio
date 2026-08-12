@@ -1,4 +1,4 @@
-use crate::{models::{BuildResult, Diagnostic}, process, toolchains};
+use crate::{models::{BuildResult, Diagnostic}, process, project, toolchains};
 use regex::Regex;
 use std::{fs, path::PathBuf, time::Instant};
 
@@ -473,6 +473,10 @@ fn minecraft_event_body(source: &str, event: &str, has_player: bool) -> Vec<Stri
                 format!("FunoMinecraft.give(player, {});", expression_to_java(value))
             } else if let Some(value) = trimmed.strip_prefix("give_custom(").and_then(|v| v.strip_suffix(')')) {
                 format!("FunoMinecraft.giveCustom(player, {});", expression_to_java(value))
+            } else if let Some(value) = trimmed.strip_prefix("damage(").and_then(|v| v.strip_suffix(')')) {
+                format!("FunoMinecraft.damage(player, {});", expression_to_java(value))
+            } else if let Some(value) = trimmed.strip_prefix("tp(").and_then(|v| v.strip_suffix(')')) {
+                format!("FunoMinecraft.tp(player, {});", expression_to_java(value))
             } else if let Some(cap) = typed_decl.captures(trimmed) {
                 let source_type = format!("{}{}", &cap[1], cap.get(2).map(|v| v.as_str()).unwrap_or(""));
                 format!("{} {} = {};", java_type(&source_type), &cap[3], expression_to_java_typed(&cap[4], Some(&source_type)))
@@ -1112,6 +1116,11 @@ fn minecraft_at_least(version: &str, wanted: (u32, u32, u32)) -> bool {
     current >= wanted
 }
 
+fn source_uses_minecraft_call(source: &str, name: &str) -> bool {
+    let prefix = format!("{name}(");
+    source.lines().any(|line| line.split("//").next().unwrap_or("").trim().starts_with(&prefix))
+}
+
 fn generate_minecraft_recipes(root: &std::path::Path, source: &str) -> Result<usize, String> {
     let manifest = fs::read_to_string(root.join("funo.toml")).map_err(|error| error.to_string())?;
     let mod_id = manifest_section_value(&manifest, "minecraft", "mod_id")
@@ -1191,6 +1200,15 @@ pub fn build_minecraft(project_root: &str, source: &str) -> BuildResult {
         Ok(requirements) => requirements,
         Err(error) => return failed(error, generated_java, started),
     };
+    if source_uses_minecraft_call(source, "damage") && !minecraft_at_least(&minecraft_version, (1, 19, 4)) {
+        return failed(
+            format!(
+                "damage(...) требует Minecraft 1.19.4 или новее, а проект использует Minecraft {minecraft_version}. Обновите версию Minecraft проекта."
+            ),
+            generated_java,
+            started,
+        );
+    }
     let toolchain = match toolchains::local_status(&root, &minecraft_version, &loader) {
         Ok(status) => status,
         Err(error) => return failed(error, generated_java, started),
@@ -1207,6 +1225,9 @@ pub fn build_minecraft(project_root: &str, source: &str) -> BuildResult {
     }
     if let Err(error) = generate_minecraft_recipes(&root, source) {
         return failed(format!("Не удалось создать рецепты: {error}"), generated_java, started);
+    }
+    if let Err(error) = project::refresh_minecraft_runtime(&root) {
+        return failed(error, generated_java, started);
     }
     let generated_path = root.join("src/main/java/funo/generated/FunoMain.java");
     if let Some(parent) = generated_path.parent() {
@@ -1348,10 +1369,34 @@ mod tests {
     }
 
     #[test]
-    fn recipe_schema_versions_are_distinct() {
+    fn minecraft_player_actions_target_the_event_player() {
+        let source = r#"use minecraft.neoforge
+mod "player_actions" {
+    on player_join(player) {
+        damage(4)
+        damage(2, "minecraft:magic")
+        tp(0, 80, 0)
+        tp("Steve")
+    }
+}"#;
+        let java = transpile_minecraft_entry(source).unwrap();
+        assert!(java.contains("FunoMinecraft.damage(player, 4);"));
+        assert!(java.contains("FunoMinecraft.damage(player, 2, \"minecraft:magic\");"));
+        assert!(java.contains("FunoMinecraft.tp(player, 0, 80, 0);"));
+        assert!(java.contains("FunoMinecraft.tp(player, \"Steve\");"));
+        assert!(!java.contains("damage @a"));
+        assert!(!java.contains("tp @a"));
+    }
+
+    #[test]
+    fn minecraft_command_versions_and_comment_detection_are_distinct() {
+        assert!(!minecraft_at_least("1.19.3", (1, 19, 4)));
+        assert!(minecraft_at_least("1.19.4", (1, 19, 4)));
         assert!(!minecraft_at_least("1.20.4", (1, 20, 5)));
         assert!(minecraft_at_least("1.20.5", (1, 20, 5)));
         assert!(!minecraft_at_least("1.20.6", (1, 21, 0)));
         assert!(minecraft_at_least("1.21.1", (1, 21, 0)));
+        assert!(source_uses_minecraft_call("    damage(2)", "damage"));
+        assert!(!source_uses_minecraft_call("    // damage(2)", "damage"));
     }
 }

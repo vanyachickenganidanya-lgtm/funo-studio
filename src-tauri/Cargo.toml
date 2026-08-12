@@ -1,6 +1,6 @@
 [package]
 name = "funo-studio"
-version = "1.0.1"
+version = "1.0.2"
 description = "Быстрый редактор, CLI-компилятор и Minecraft SDK языка Funo"
 authors = ["Funo Project"]
 edition = "2021"

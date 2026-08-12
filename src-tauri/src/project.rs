@@ -135,6 +135,8 @@ mod "hello_funo" {
 
     on player_join(player) {
         tell("Добро пожаловать!")
+        // damage(2)
+        // tp("~", "~1", "~")
     }
 }
 "#,
@@ -712,6 +714,8 @@ mod "{mod_id}" {{
     on player_join(player) {{
         tell("Добро пожаловать на сервер!")
         // give("minecraft:diamond", 1)
+        // damage(2)
+        // tp("~", "~1", "~")
     }}
 }}
 "#
@@ -1160,6 +1164,13 @@ public final class FunoMod {{
     )
 }
 
+pub(crate) fn refresh_minecraft_runtime(root: &Path) -> Result<(), String> {
+    let java_dir = root.join("src/main/java/funo/generated");
+    fs::create_dir_all(&java_dir).map_err(|error| error.to_string())?;
+    fs::write(java_dir.join("FunoMinecraft.java"), FUNO_MINECRAFT_RUNTIME)
+        .map_err(|error| format!("Не удалось обновить Minecraft API Funo: {error}"))
+}
+
 fn write_generated_files(root: &Path, resource: &str, resource_content: &str, bridge: &str) -> Result<(), String> {
     let resource_path = root.join("src/main/resources").join(resource);
     let java_dir = root.join("src/main/java/funo/generated");
@@ -1179,8 +1190,7 @@ public final class FunoMain {
 "#,
     )
     .map_err(|error| error.to_string())?;
-    fs::write(java_dir.join("FunoMinecraft.java"), FUNO_MINECRAFT_RUNTIME)
-        .map_err(|error| error.to_string())?;
+    refresh_minecraft_runtime(root)?;
     Ok(())
 }
 
@@ -1281,6 +1291,24 @@ public final class FunoMinecraft {
 
     public static void give(Object player, Object item, Object count) {
         command("give " + playerName(player) + " " + item + " " + count);
+    }
+
+    /** Damages only the player supplied by the current Funo player event. */
+    public static void damage(Object player, Object amount) {
+        damage(player, amount, "minecraft:generic");
+    }
+
+    public static void damage(Object player, Object amount, Object damageType) {
+        command("damage " + playerName(player) + " " + amount + " " + damageType);
+    }
+
+    /** Teleports only the player supplied by the current Funo player event. */
+    public static void tp(Object player, Object destination) {
+        command("tp " + playerName(player) + " " + destination);
+    }
+
+    public static void tp(Object player, Object x, Object y, Object z) {
+        command("tp " + playerName(player) + " " + x + " " + y + " " + z);
     }
 
     /** Creates a stable Funo item alias backed by a vanilla or loader item. */
@@ -1431,6 +1459,21 @@ mod tests {
     }
 
     #[test]
+    fn refreshes_minecraft_runtime_for_existing_projects() {
+        let root = std::env::temp_dir().join(format!("funo-runtime-refresh-test-{}", std::process::id()));
+        let runtime = root.join("src/main/java/funo/generated/FunoMinecraft.java");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(runtime.parent().unwrap()).unwrap();
+        fs::write(&runtime, "// старая версия").unwrap();
+
+        refresh_minecraft_runtime(&root).unwrap();
+        let generated = fs::read_to_string(&runtime).unwrap();
+        assert!(generated.contains("public static void damage(Object player, Object amount)"));
+        assert!(generated.contains("public static void tp(Object player, Object x, Object y, Object z)"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn modern_forge_manifest_keeps_forge_dependency_schema() {
         let root = std::env::temp_dir().join(format!("funo-forge-manifest-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -1502,6 +1545,12 @@ mod tests {
         assert!(root.join("fabric/src/main/resources/fabric.mod.json").is_file());
         assert!(root.join("forge/src/main/resources/META-INF/mods.toml").is_file());
         assert!(root.join("neoforge/src/main/resources/META-INF/neoforge.mods.toml").is_file());
+        let runtime = fs::read_to_string(root.join("neoforge/src/main/java/funo/generated/FunoMinecraft.java")).unwrap();
+        assert!(runtime.contains("damage \" + playerName(player)"));
+        assert!(runtime.contains("tp \" + playerName(player)"));
+        let template = fs::read_to_string(root.join("neoforge/main.fun")).unwrap();
+        assert!(template.contains("// damage(2)"));
+        assert!(template.contains("// tp(\"~\", \"~1\", \"~\")"));
         let _ = fs::remove_dir_all(root);
     }
 }

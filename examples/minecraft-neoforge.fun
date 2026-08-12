@@ -13,5 +13,7 @@ mod "hello_funo_neoforge" {
     on player_join(player) {
         tell("Привет из Funo + NeoForge!")
         give("minecraft:emerald", 1)
+        // damage(2) наносит одно сердце урона только этому игроку
+        // tp("~", "~1", "~") телепортирует только этого игрока
     }
 }
