@@ -301,3 +301,7 @@ input, select { height: 30px; border: 1px solid #3c3c3c; background: #252526; pa
   .wiki-page { grid-template-columns: 1fr; }
   .doc-nav { position: static; }
 }
+@media (max-width: 500px) {
+  .loader-options { grid-template-columns: 1fr; }
+  .loader { min-height: 48px; }
+}
