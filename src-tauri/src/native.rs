@@ -767,6 +767,31 @@ fn failed(error: String, generated: String, started: Instant) -> BuildResult {
 mod tests {
     use super::*;
 
+    fn action_error(title: &str, message: impl AsRef<str>) {
+        let message = message
+            .as_ref()
+            .replace('%', "%25")
+            .replace('\r', "%0D")
+            .replace('\n', "%0A");
+        eprintln!("::error title={title}::{message}");
+    }
+
+    fn assert_success(output: std::process::Output, title: &str) {
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            action_error(title, format!("{stderr}\n{stdout}"));
+            panic!("{title} failed");
+        }
+    }
+
+    fn assert_contains(output: &str, needle: &str, title: &str) {
+        if !output.contains(needle) {
+            action_error(title, format!("missing `{needle}` in generated output:\n{output}"));
+            panic!("{title} failed");
+        }
+    }
+
     #[test]
     fn emits_cpp_and_rust_entrypoints() {
         let source = "fun main() {\n    int score = 2\n    score += 3\n    println(score)\n    return(200)\n}";
@@ -807,25 +832,25 @@ fun main() {
     println(len(names))
 }"#;
         let cpp = transpile_backend(source, "cpp").unwrap();
-        assert!(cpp.contains("std::unordered_map<std::string, std::vector<int>> scores"));
-        assert!(cpp.contains("names.push_back(\"Steve\")"));
-        assert!(cpp.contains("tags.insert(\"builder\")"));
-        assert!(cpp.contains("tags.insert(\"from-function\")"));
+        assert_contains(&cpp, "std::unordered_map<std::string, std::vector<int>> scores", "C++ map lowering");
+        assert_contains(&cpp, "names.push_back(\"Steve\")", "C++ list lowering");
+        assert_contains(&cpp, "tags.insert(\"builder\")", "C++ set lowering");
+        assert_contains(&cpp, "tags.insert(\"from-function\")", "C++ set parameter lowering");
 
         let rust = transpile_backend(source, "rust").unwrap();
-        assert!(rust.contains("mut tags: HashSet<String>"));
-        assert!(rust.contains("names.push((\"Steve\".to_string()).into())"));
-        assert!(rust.contains("tags.insert((\"builder\".to_string()).into())"));
-        assert!(rust.contains("HashMap<String, Vec<i32>>"));
+        assert_contains(&rust, "mut tags: HashSet<String>", "Rust set parameter lowering");
+        assert_contains(&rust, "names.push((\"Steve\".to_string()).into())", "Rust list lowering");
+        assert_contains(&rust, "tags.insert((\"builder\".to_string()).into())", "Rust set lowering");
+        assert_contains(&rust, "HashMap<String, Vec<i32>>", "Rust map lowering");
 
         let javascript = transpile_backend(source, "javascript").unwrap();
-        assert!(javascript.contains("names.push(\"Steve\")"));
-        assert!(javascript.contains("tags.add(\"builder\")"));
-        assert!(javascript.contains("console.log(names.length)"));
+        assert_contains(&javascript, "names.push(\"Steve\")", "JavaScript list lowering");
+        assert_contains(&javascript, "tags.add(\"builder\")", "JavaScript set lowering");
+        assert_contains(&javascript, "console.log(names.length)", "JavaScript length lowering");
 
         let python = transpile_backend(source, "python").unwrap();
-        assert!(python.contains("names.append(\"Steve\")"));
-        assert!(python.contains("tags.add(\"builder\")"));
+        assert_contains(&python, "names.append(\"Steve\")", "Python list lowering");
+        assert_contains(&python, "tags.add(\"builder\")", "Python set lowering");
     }
 
     #[test]
@@ -850,13 +875,13 @@ fun main() {
                 .arg(&rust_artifact)
                 .output()
                 .unwrap();
-            assert!(rust_output.status.success(), "generated Rust for {name} failed:\n{}", String::from_utf8_lossy(&rust_output.stderr));
+            assert_success(rust_output, &format!("generated Rust for {name}"));
 
             let javascript = transpile_backend(source, "javascript").unwrap();
             let javascript_source = root.join(format!("{name}.js"));
             fs::write(&javascript_source, javascript).unwrap();
             let node_output = std::process::Command::new("node").arg("--check").arg(&javascript_source).output().unwrap();
-            assert!(node_output.status.success(), "generated JavaScript for {name} failed:\n{}", String::from_utf8_lossy(&node_output.stderr));
+            assert_success(node_output, &format!("generated JavaScript for {name}"));
 
             let python = transpile_backend(source, "python").unwrap();
             let python_source = root.join(format!("{name}.py"));
@@ -868,7 +893,7 @@ fun main() {
                 .arg(&python_source)
                 .output()
                 .unwrap();
-            assert!(python_output.status.success(), "generated Python for {name} failed:\n{}", String::from_utf8_lossy(&python_output.stderr));
+            assert_success(python_output, &format!("generated Python for {name}"));
         }
 
         if let Some(compiler) = ["c++", "g++", "clang++"]
@@ -887,7 +912,7 @@ fun main() {
                     .arg(&cpp_artifact)
                     .output()
                     .unwrap();
-                assert!(output.status.success(), "generated C++ for {name} failed:\n{}", String::from_utf8_lossy(&output.stderr));
+                assert_success(output, &format!("generated C++ for {name}"));
             }
         }
 
