@@ -1,7 +1,8 @@
-mod compiler;
-mod models;
-mod project;
-mod registry;
+pub mod cli;
+pub mod compiler;
+pub mod models;
+pub mod project;
+pub mod registry;
 
 use models::{BuildResult, Diagnostic, Project, RegistryPackage, RegistryResponse};
 

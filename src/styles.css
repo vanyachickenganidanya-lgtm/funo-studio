@@ -247,6 +247,13 @@ input, select { height: 30px; border: 1px solid #3c3c3c; background: #252526; pa
 .settings-list label small { color: #777; }
 .settings-list label input:not([type="checkbox"]), .settings-list label select { width: 330px; }
 .settings-list label input[type="checkbox"] { width: 16px; height: 16px; }
+.cli-card { min-height: 88px; margin-top: 10px; padding: 13px 14px; display: flex; align-items: center; gap: 13px; border: 1px solid #35414a; border-left: 2px solid #36c995; background: linear-gradient(100deg, rgba(54,201,149,.075), #222 55%); }
+.cli-card > div { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 7px; background: rgba(54,201,149,.12); color: #72ddb7; }
+.cli-card > span { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.cli-card b { color: #e7e7e7; font-weight: 600; }
+.cli-card small { color: #8f9aa3; line-height: 1.45; }
+.cli-card code { margin-top: 4px; color: #b7e7d4; font: 10px/16px "Cascadia Code", Consolas, monospace; }
+.cli-card.compact { min-height: 66px; }
 
 /* Modal / toast */
 .toast { position: fixed; right: 13px; bottom: 34px; z-index: 100; width: min(380px,calc(100% - 26px)); min-height: 42px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; background: #252526; border: 1px solid #4a4a4a; border-left: 3px solid var(--green); box-shadow: 0 6px 20px rgba(0,0,0,.4); opacity: 0; transform: translateY(8px); pointer-events: none; transition: .18s; }

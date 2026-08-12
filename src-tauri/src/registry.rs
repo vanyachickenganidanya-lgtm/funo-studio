@@ -1,10 +1,14 @@
 use crate::models::{RegistryIndex, RegistryPackage, RegistryResponse};
 use regex::Regex;
 use sha2::{Digest, Sha256};
-use std::{fs, path::PathBuf, time::Duration};
+use std::{
+    fs,
+    path::{Component, Path, PathBuf},
+    time::Duration,
+};
 use url::Url;
 
-const OFFICIAL_REPOSITORY: &str = "https://github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL";
+pub const OFFICIAL_REPOSITORY: &str = "https://github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL";
 const MAX_PACKAGE_BYTES: usize = 100 * 1024 * 1024;
 
 fn index_url(repository: &str) -> Result<String, String> {
@@ -31,7 +35,7 @@ pub async fn fetch_registry(repository: Option<String>) -> Result<RegistryRespon
     let raw_url = index_url(&source)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
-        .user_agent("Funo-Studio/0.2")
+        .user_agent("Funo-Studio/0.3")
         .build()
         .map_err(|e| e.to_string())?;
     let response = match client.get(&raw_url).send().await {
@@ -114,7 +118,7 @@ pub async fn install_package(
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .user_agent("Funo-Studio/0.2")
+        .user_agent("Funo-Studio/0.3")
         .build()
         .map_err(|e| e.to_string())?;
     let response = client
@@ -152,6 +156,12 @@ pub async fn install_package(
     let extension = if package.kind == "java" { "jar" } else { "funpkg" };
     fs::write(directory.join(format!("package.{extension}")), &bytes)
         .map_err(|e| format!("Не удалось сохранить пакет: {e}"))?;
+    if package.kind == "funo" || package.kind == "minecraft" {
+        if let Err(error) = unpack_funpkg(&directory, &bytes) {
+            let _ = fs::remove_dir_all(&directory);
+            return Err(error);
+        }
+    }
     fs::write(
         directory.join("package.json"),
         serde_json::to_vec_pretty(&package).map_err(|e| e.to_string())?,
@@ -162,6 +172,83 @@ pub async fn install_package(
         "{} {} установлен. SHA-256 проверена.",
         package.name, package.version
     ))
+}
+
+fn unpack_funpkg(directory: &Path, bytes: &[u8]) -> Result<(), String> {
+    let archive: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|e| format!("Пакет .funpkg должен быть JSON-архивом Funo: {e}"))?;
+    if archive.get("schema").and_then(|v| v.as_u64()) != Some(1) {
+        return Err("Пакет использует неподдерживаемую схему .funpkg".into());
+    }
+    let entry = archive
+        .get("entry")
+        .and_then(|v| v.as_str())
+        .ok_or("В .funpkg не указан entry")?;
+    let files = archive
+        .get("files")
+        .and_then(|v| v.as_object())
+        .ok_or("В .funpkg нет объекта files")?;
+    if files.len() > 128 || !files.contains_key(entry) {
+        return Err("В .funpkg слишком много файлов или отсутствует entry".into());
+    }
+    let source_root = directory.join("src");
+    for (name, value) in files {
+        let relative = PathBuf::from(name);
+        if relative.is_absolute()
+            || relative.components().any(|component| {
+                matches!(
+                    component,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+        {
+            return Err(format!("Небезопасный путь в .funpkg: {name}"));
+        }
+        let content = value
+            .as_str()
+            .ok_or_else(|| format!("Файл {name} в .funpkg должен быть строкой"))?;
+        let destination = source_root.join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(destination, content).map_err(|e| e.to_string())?;
+    }
+    fs::write(directory.join("entry.txt"), entry).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn remove_package(project_root: &str, package_id: &str) -> Result<String, String> {
+    if !Regex::new(r"^[a-z0-9][a-z0-9._-]{1,80}$")
+        .unwrap()
+        .is_match(package_id)
+    {
+        return Err("Некорректный ID пакета".into());
+    }
+    let root = PathBuf::from(project_root);
+    if !root.is_absolute() {
+        return Err("Некорректная папка проекта".into());
+    }
+    let directory = root.join(".funo").join("packages").join(package_id);
+    if !directory.exists() {
+        return Err(format!("Пакет {package_id} не установлен"));
+    }
+    fs::remove_dir_all(directory).map_err(|e| format!("Не удалось удалить пакет: {e}"))?;
+    let lock_path = root.join("funo.lock");
+    if lock_path.exists() {
+        let mut lock: serde_json::Value = serde_json::from_slice(
+            &fs::read(&lock_path).map_err(|e| e.to_string())?,
+        )
+        .unwrap_or_else(|_| serde_json::json!({ "schema": 1, "packages": [] }));
+        if let Some(packages) = lock.get_mut("packages").and_then(|v| v.as_array_mut()) {
+            packages.retain(|entry| entry.get("id").and_then(|v| v.as_str()) != Some(package_id));
+        }
+        fs::write(
+            lock_path,
+            serde_json::to_vec_pretty(&lock).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(format!("Пакет {package_id} удалён"))
 }
 
 fn update_lock(root: &std::path::Path, package: &RegistryPackage, actual_hash: &str) -> Result<(), String> {
@@ -176,7 +263,9 @@ fn update_lock(root: &std::path::Path, package: &RegistryPackage, actual_hash: &
         .get_mut("packages")
         .and_then(|x| x.as_array_mut())
         .ok_or("Повреждён funo.lock")?;
-    packages.retain(|entry| entry.get("id").and_then(|x| x.as_str()) != Some(&package.id));
+    packages.retain(|entry| {
+        entry.get("id").and_then(|x| x.as_str()) != Some(package.id.as_str())
+    });
     packages.push(serde_json::json!({
         "id": package.id, "version": package.version, "kind": package.kind,
         "source_url": package.source_url, "sha256": actual_hash

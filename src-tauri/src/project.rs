@@ -42,11 +42,18 @@ pub fn ensure_demo_project() -> Result<Project, String> {
     fs::create_dir_all(&root).map_err(|e| format!("Не удалось создать проект: {e}"))?;
     write_if_missing(
         &root.join("main.fun"),
-        r#"fun fib(n) = if n < 2 then n else fib(n - 1) + fib(n - 2)
+        r#"fun fib(n: int) -> int = if n < 2 then n else fib(n - 1) + fib(n - 2)
 
 fun main() {
-    println("Привет из настоящего Funo Studio!")
-    println(fib(10))
+    text title = "Привет из Funo Studio!"
+    int answer = fib(10)
+    bool ready = answer == 55
+
+    println(title)
+    println(answer)
+    if ready {
+        println("Типы и условия работают")
+    }
     return(200)
 }"#,
     )?;
@@ -171,7 +178,17 @@ pub fn create_minecraft_project(name: &str, mod_id: &str, loader: &str) -> Resul
 
 mod "{mod_id}" {{
     on start {{
-        println("Мод {name} запущен!")
+        log("Мод {name} загружен")
+    }}
+
+    on server_start {{
+        broadcast("Сервер запущен с модом {name}!")
+        run_command("time set day")
+    }}
+
+    on player_join(player) {{
+        tell("Добро пожаловать на сервер!")
+        // give("minecraft:diamond", 1)
     }}
 }}
 "#
@@ -263,8 +280,15 @@ java {{ toolchain.languageVersion = JavaLanguageVersion.of(21); withSourcesJar()
         &format!(
             r#"package funo.generated;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+
 public final class FunoMod implements ModInitializer {{
-    @Override public void onInitialize() {{ FunoMain.start(); }}
+    @Override public void onInitialize() {{
+        FunoMain.start();
+        ServerLifecycleEvents.SERVER_STARTED.register(FunoMain::serverStart);
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> FunoMain.playerJoin(handler.player));
+    }}
 }}
 "#
         ),
@@ -306,10 +330,24 @@ side="BOTH"
         &toml,
         &format!(
             r#"package funo.generated;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.entity.player.PlayerEvent;
+import net.minecraftforge.event.server.ServerStartedEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+
 @Mod("{mod_id}")
 public final class FunoMod {{
-    public FunoMod() {{ FunoMain.start(); }}
+    public FunoMod() {{
+        FunoMain.start();
+        MinecraftForge.EVENT_BUS.register(this);
+    }}
+
+    @SubscribeEvent
+    public void onServerStarted(ServerStartedEvent event) {{ FunoMain.serverStart(event.getServer()); }}
+
+    @SubscribeEvent
+    public void onPlayerJoin(PlayerEvent.PlayerLoggedInEvent event) {{ FunoMain.playerJoin(event.getEntity()); }}
 }}
 "#
         ),
@@ -333,8 +371,97 @@ fn write_generated_files(
         r#"package funo.generated;
 /** Этот файл обновляется компилятором Funo перед сборкой. */
 public final class FunoMain {
-    public static void start() {
-        System.out.println("Minecraft-мод Funo запущен!");
+    public static void start() { FunoMinecraft.log("Minecraft-мод Funo запущен!"); }
+    public static void serverStart(Object server) { FunoMinecraft.bindServer(server); }
+    public static void playerJoin(Object player) {}
+}
+"#,
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        java_dir.join("FunoMinecraft.java"),
+        r#"package funo.generated;
+
+import java.lang.reflect.Method;
+
+/** Небольшой Funo API поверх Fabric/Forge. Не требует Java-кода в main.fun. */
+public final class FunoMinecraft {
+    private static Object server;
+    private FunoMinecraft() {}
+
+    public static void bindServer(Object value) {
+        server = value;
+        log("Minecraft server API подключён");
+    }
+
+    public static void log(Object value) {
+        System.out.println("[Funo] " + String.valueOf(value));
+    }
+
+    public static void broadcast(Object value) {
+        if (!command("tellraw @a " + json(value))) log(value);
+    }
+
+    public static void actionbar(Object value) {
+        command("title @a actionbar " + json(value));
+    }
+
+    public static void tell(Object player, Object value) {
+        String name = playerName(player);
+        if (!command("tellraw " + name + " " + json(value))) log(name + ": " + value);
+    }
+
+    public static void give(Object player, Object item, Object count) {
+        command("give " + playerName(player) + " " + item + " " + count);
+    }
+
+    public static boolean command(Object value) {
+        if (server == null) {
+            log("Команда отложена до запуска сервера: " + value);
+            return false;
+        }
+        try {
+            Object manager = call(server, new String[] { "getCommandManager", "getCommands" });
+            Object source = call(server, new String[] { "getCommandSource", "createCommandSourceStack" });
+            invoke(manager, new String[] { "executeWithPrefix", "performPrefixedCommand" }, source, String.valueOf(value));
+            return true;
+        } catch (ReflectiveOperationException error) {
+            log("Не удалось выполнить команду: " + error.getMessage());
+            return false;
+        }
+    }
+
+    private static String playerName(Object player) {
+        try {
+            Object profile = call(player, new String[] { "getGameProfile" });
+            return String.valueOf(call(profile, new String[] { "getName" }));
+        } catch (ReflectiveOperationException ignored) {
+            try {
+                return String.valueOf(call(player, new String[] { "getScoreboardName", "getName" }));
+            } catch (ReflectiveOperationException error) {
+                return "@s";
+            }
+        }
+    }
+
+    private static String json(Object value) {
+        String text = String.valueOf(value).replace("\\", "\\\\").replace("\"", "\\\"");
+        return "{\"text\":\"" + text + "\"}";
+    }
+
+    private static Object call(Object target, String[] names) throws ReflectiveOperationException {
+        return invoke(target, names);
+    }
+
+    private static Object invoke(Object target, String[] names, Object... args) throws ReflectiveOperationException {
+        for (String name : names) {
+            for (Method method : target.getClass().getMethods()) {
+                if (!method.getName().equals(name) || method.getParameterCount() != args.length) continue;
+                try { return method.invoke(target, args); }
+                catch (IllegalArgumentException ignored) { /* попробовать другую перегрузку */ }
+            }
+        }
+        throw new NoSuchMethodException(String.join(" / ", names));
     }
 }
 "#,

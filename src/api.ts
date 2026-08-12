@@ -46,11 +46,18 @@ export type RegistryResponse = {
 
 const isTauri = () => '__TAURI_INTERNALS__' in window;
 
-const demoCode = `fun fib(n) = if n < 2 then n else fib(n - 1) + fib(n - 2)
+const demoCode = `fun fib(n: int) -> int = if n < 2 then n else fib(n - 1) + fib(n - 2)
 
 fun main() {
-    println("Привет из настоящего Funo Studio!")
-    println(fib(10))
+    text title = "Привет из Funo Studio!"
+    int answer = fib(10)
+    bool ready = answer == 55
+
+    println(title)
+    println(answer)
+    if ready {
+        println("Типы и условия работают")
+    }
     return(200)
 }`;
 

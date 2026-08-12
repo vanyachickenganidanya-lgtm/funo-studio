@@ -1,6 +1,7 @@
-fun greet(name) = "Привет, " + name
+fun greet(name: text) -> text = "Привет, " + name
 
 fun main() {
-    println(greet("Мир"))
+    text who = readln()
+    println(greet(who))
     return(200)
 }
