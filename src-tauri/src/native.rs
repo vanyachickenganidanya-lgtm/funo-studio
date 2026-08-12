@@ -118,25 +118,276 @@ fn rust_parameters(value: &str) -> (String, String) {
     (parameters.join(", "), conversions)
 }
 
-fn operators(value: &str, target: &str) -> String {
-    if target == "python" {
-        // Preserve `!=`: replacing every exclamation mark would produce the
-        // invalid Python operator `not =`.
-        let value = value
-            .replace(" && ", " and ")
-            .replace(" || ", " or ")
-            .replace("not ", "not ");
-        let value = Regex::new(r"\btrue\b").unwrap().replace_all(&value, "True").into_owned();
-        return Regex::new(r"\bfalse\b").unwrap().replace_all(&value, "False").into_owned();
+fn native_fstring_bounds(value: &str, start: usize) -> Option<(usize, String)> {
+    let mut index = start + 2;
+    let mut braces = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    while index < value.len() {
+        let character = value[index..].chars().next()?;
+        let width = character.len_utf8();
+        if escaped {
+            escaped = false;
+            index += width;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            index += width;
+            continue;
+        }
+        if braces > 0 {
+            if let Some(active_quote) = quote {
+                if character == active_quote {
+                    quote = None;
+                }
+            } else if character == '"' || character == '\'' {
+                quote = Some(character);
+            } else if character == '{' {
+                braces += 1;
+            } else if character == '}' {
+                braces -= 1;
+            }
+        } else if character == '{' {
+            if value[index + width..].starts_with('{') {
+                index += width;
+            } else {
+                braces = 1;
+            }
+        } else if character == '"' {
+            return Some((index + width, value[start + 2..index].to_string()));
+        }
+        index += width;
     }
-    value
-        .replace(" and ", " && ")
-        .replace(" or ", " || ")
-        .replace("not ", "!")
+    None
+}
+
+fn native_fstring_parts(content: &str) -> Vec<(bool, String)> {
+    let mut parts = Vec::new();
+    let mut literal = String::new();
+    let mut index = 0usize;
+    while index < content.len() {
+        let character = content[index..].chars().next().unwrap();
+        let width = character.len_utf8();
+        if character == '{' && content[index + width..].starts_with('{') {
+            literal.push('{');
+            index += width * 2;
+            continue;
+        }
+        if character == '}' && content[index + width..].starts_with('}') {
+            literal.push('}');
+            index += width * 2;
+            continue;
+        }
+        if character != '{' {
+            literal.push(character);
+            index += width;
+            continue;
+        }
+        if !literal.is_empty() {
+            parts.push((false, std::mem::take(&mut literal)));
+        }
+        let expression_start = index + width;
+        index = expression_start;
+        let mut depth = 1usize;
+        let mut quote = None;
+        let mut escaped = false;
+        while index < content.len() && depth > 0 {
+            let current = content[index..].chars().next().unwrap();
+            let current_width = current.len_utf8();
+            if escaped {
+                escaped = false;
+            } else if current == '\\' {
+                escaped = true;
+            } else if let Some(active_quote) = quote {
+                if current == active_quote {
+                    quote = None;
+                }
+            } else if current == '"' || current == '\'' {
+                quote = Some(current);
+            } else if current == '{' {
+                depth += 1;
+            } else if current == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    parts.push((true, content[expression_start..index].trim().to_string()));
+                    index += current_width;
+                    break;
+                }
+            }
+            index += current_width;
+        }
+        if depth > 0 {
+            literal.push_str(&content[expression_start - width..]);
+            break;
+        }
+    }
+    if !literal.is_empty() || parts.is_empty() {
+        parts.push((false, literal));
+    }
+    parts
+}
+
+fn render_native_fstring(content: &str, target: &str) -> String {
+    let parts = native_fstring_parts(content);
+    match target {
+        "cpp" => {
+            let values = parts
+                .into_iter()
+                .filter_map(|(expression, value)| {
+                    if expression {
+                        (!value.is_empty()).then(|| translate_expression(&value, target))
+                    } else {
+                        (!value.is_empty()).then(|| format!("\"{value}\""))
+                    }
+                })
+                .collect::<Vec<_>>();
+            if values.is_empty() {
+                "std::string(\"\")".into()
+            } else {
+                format!("funo_concat({})", values.join(", "))
+            }
+        }
+        "rust" => {
+            let mut template = String::new();
+            let mut values = Vec::new();
+            for (expression, value) in parts {
+                if expression {
+                    template.push_str("{}");
+                    values.push(translate_expression(&value, target));
+                } else {
+                    template.push_str(&value.replace('{', "{{").replace('}', "}}"));
+                }
+            }
+            if values.is_empty() {
+                format!("\"{template}\".to_string()")
+            } else {
+                format!("format!(\"{template}\", {})", values.join(", "))
+            }
+        }
+        "javascript" => {
+            let mut template = String::new();
+            for (expression, value) in parts {
+                if expression {
+                    template.push_str("${");
+                    template.push_str(&translate_expression(&value, target));
+                    template.push('}');
+                } else {
+                    template.push_str(&value.replace('`', "\\`").replace("${", "\\${"));
+                }
+            }
+            format!("`{template}`")
+        }
+        _ => {
+            let mut template = String::new();
+            for (expression, value) in parts {
+                if expression {
+                    template.push('{');
+                    template.push_str(&translate_expression(&value, "python"));
+                    template.push('}');
+                } else {
+                    template.push_str(&value.replace('{', "{{").replace('}', "}}"));
+                }
+            }
+            format!("f\"{template}\"")
+        }
+    }
+}
+
+fn lower_native_fstrings(value: &str, target: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut index = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    while index < value.len() {
+        let character = value[index..].chars().next().unwrap();
+        let width = character.len_utf8();
+        if let Some(active_quote) = quote {
+            output.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active_quote {
+                quote = None;
+            }
+            index += width;
+            continue;
+        }
+        let previous_is_identifier = index > 0
+            && value[..index].chars().next_back().is_some_and(|previous| previous.is_alphanumeric() || previous == '_');
+        if character == 'f' && !previous_is_identifier && value[index + width..].starts_with('"') {
+            if let Some((end, content)) = native_fstring_bounds(value, index) {
+                output.push_str(&render_native_fstring(&content, target));
+                index = end;
+                continue;
+            }
+        }
+        if character == '"' || character == '\'' {
+            quote = Some(character);
+        }
+        output.push(character);
+        index += width;
+    }
+    output
+}
+
+fn operators(value: &str, target: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut word = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let flush_word = |output: &mut String, word: &mut String| {
+        match (target, word.as_str()) {
+            ("python", "true") => output.push_str("True"),
+            ("python", "false") => output.push_str("False"),
+            ("python", _) => output.push_str(word),
+            (_, "and") => output.push_str("&&"),
+            (_, "or") => output.push_str("||"),
+            (_, "not") => output.push('!'),
+            _ => output.push_str(word),
+        }
+        word.clear();
+    };
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        if let Some(active_quote) = quote {
+            output.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if character == '"' || character == '\'' || character == '`' {
+            flush_word(&mut output, &mut word);
+            quote = Some(character);
+            output.push(character);
+        } else if character.is_alphanumeric() || character == '_' {
+            word.push(character);
+        } else {
+            flush_word(&mut output, &mut word);
+            if target == "python" && character == '&' && characters.peek() == Some(&'&') {
+                characters.next();
+                output.push_str(" and ");
+            } else if target == "python" && character == '|' && characters.peek() == Some(&'|') {
+                characters.next();
+                output.push_str(" or ");
+            } else {
+                output.push(character);
+            }
+        }
+    }
+    flush_word(&mut output, &mut word);
+    output
 }
 
 fn translate_expression(value: &str, target: &str) -> String {
-    let mut value = operators(value.trim(), target);
+    let lowered_fstrings = lower_native_fstrings(value.trim(), target);
+    let mut value = operators(&lowered_fstrings, target);
     let long_suffix = Regex::new(r"\b(\d+)L\b").unwrap();
     value = long_suffix
         .replace_all(&value, if target == "cpp" { "${1}LL" } else { "${1}" })
@@ -869,6 +1120,22 @@ mod tests {
         assert!(python.contains("def greet(name):"));
         assert!(python.contains("print(name)"));
         assert!(python.contains("for i in range(0, 3):"));
+    }
+
+    #[test]
+    fn lowers_fstrings_for_every_backend() {
+        let source = r#"fun main() {
+    int score = 7
+    println(f"Счёт {score}: {{ok}}")
+}"#;
+        let cpp = transpile_backend(source, "cpp").unwrap();
+        assert_contains(&cpp, "funo_concat(\"Счёт \", score, \": {ok}\")", "C++ f-string lowering");
+        let rust = transpile_backend(source, "rust").unwrap();
+        assert_contains(&rust, "format!(\"Счёт {}: {{ok}}\", score)", "Rust f-string lowering");
+        let javascript = transpile_backend(source, "javascript").unwrap();
+        assert_contains(&javascript, "`Счёт ${score}: {ok}`", "JavaScript f-string lowering");
+        let python = transpile_backend(source, "python").unwrap();
+        assert_contains(&python, "f\"Счёт {score}: {{ok}}\"", "Python f-string lowering");
     }
 
     #[test]

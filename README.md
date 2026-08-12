@@ -1,4 +1,4 @@
-# Funo 0.3 — Studio, CLI и Minecraft SDK
+# Funo Studio 1.0 — язык, CLI и Minecraft SDK
 
 **Funo** — простой язык программирования, который компилируется в Java/JVM. В репозитории находятся красивый desktop-редактор на Tauri 2, настоящий консольный компилятор `funo`, менеджер библиотек и генератор Minecraft-модов для Fabric, Forge и NeoForge.
 
@@ -14,6 +14,7 @@
 - массивы `int[]` и коллекции `list<T>`, `set<T>`, `map<K,V>`;
 - переменные `let`, `var`, `const` и привычная запись `int score = 10`;
 - функции с выводимыми или явными типами;
+- Python-style f-строки `f"Игрок {player}: {score}"` во всех backend: Java/JVM, Minecraft, C++ 17, Rust, JavaScript и Python;
 - `if/else`, короткий `if … then … else`, `while`, `for … in`, `repeat`, `break`, `continue`;
 - ввод `readln`, `readInt`, `readLong`, `readDouble`, `readBool`;
 - компиляция в Java, `.class` и запускаемый `.jar`;
@@ -35,7 +36,7 @@ fun main() {
     list<text> worlds = ["overworld", "nether"]
 
     if winner {
-        println(player + " победил: " + score)
+        println(f"{player} победил: {score}")
     } else {
         println("Попробуй ещё раз")
     }
@@ -49,6 +50,17 @@ fun main() {
 ```
 
 Точки с запятой не обязательны. `return(200)` в `main` означает успешное завершение Funo и преобразуется в обычный `return` JVM.
+
+### F-строки во всех backend
+
+```funo
+text name = "Alex"
+int score = 42
+println(f"Игрок {name}: {score}")
+println(f"Фигурные скобки: {{готово}}")
+```
+
+Внутри `{…}` можно использовать выражение. `{{` и `}}` выводят обычные фигурные скобки. Компилятор опускает этот синтаксис в Java-конкатенацию, `funo_concat` для C++, `format!` для Rust, template literals для JavaScript и нативные f-строки Python. В Minecraft выражение `{player}` выводит имя игрока, а не внутренний объект загрузчика.
 
 ### Коллекции
 
@@ -189,19 +201,46 @@ mod "hello_funo" {
     }
 
     on player_join(player) {
-        tell("Привет!")
-        give("minecraft:diamond", 1)
+        tell(f"Привет, {player}!")
         // damage(2)
         // tp("~", "~1", "~")
+    }
+
+    on block_break(player, block) {
+        broadcast(f"{player} сломал {block}")
+        give("minecraft:diamond", 1)
+    }
+
+    on player_leave(player) {
+        log(f"{player} покинул мир")
+    }
+
+    // Универсальный fallback для доступных событий конкретного loader/version.
+    on player_event(player, event, detail) {
+        log(f"{player}: {event} — {detail}")
     }
 }
 ```
 
-События:
+События загрузки:
 
 - `on start` — загрузка мода;
 - `on server_start` — сервер полностью запущен;
-- `on player_join(player)` — игрок вошёл.
+- `on player_join(player)` — игрок вошёл в мир.
+
+Внутримировые события игрока:
+
+| Группа | Обработчики |
+| --- | --- |
+| Жизненный цикл | `player_leave(player)`, `player_tick(player)`, `player_respawn(player, detail)`, `player_death(player, detail)` |
+| Блоки | `block_break(player, block)`, `block_place(player, block)`, `block_interact(player, block)` |
+| Предметы | `item_use(player, item)`, `item_pickup(player, item)`, `item_drop(player, item)`, `item_craft(player, item)`, `item_smelt(player, item)` |
+| Сущности и бой | `entity_interact(player, entity)`, `entity_attack(player, entity)`, `entity_kill(player, entity)`, `player_damage(player, amount)` |
+| Мир и общение | `dimension_change(player, dimension)`, `chat(player, message)`, `command(player, command)`, `container_open(player, container)`, `container_close(player, container)` |
+| Остальное в мире | `player_sleep(player, detail)`, `player_wake(player, detail)`, `advancement(player, advancement)`, `player_jump(player, detail)` |
+| Version-neutral fallback | `player_event(player, event, detail)` |
+
+`player` всегда является конкретным исполнителем/участником события. Второй аргумент именованного события содержит доступный контекст загрузчика. Forge и NeoForge подписываются на общий event bus и классифицируют player-события отражательно; Fabric отражательно регистрирует callback-и, доступные в выбранной версии Fabric API. Callback-и с возвращаемым значением получают неинвазивный `PASS`/безопасный default. `player_event` позволяет обработать доступное событие, даже если у него нет отдельного стабильного имени Funo.
 
 Это одинаково работает на выделенном сервере и в одиночном мире: одиночная игра запускает встроенный сервер, а локальный пользователь подключается к нему как игрок.
 
@@ -216,7 +255,7 @@ Minecraft API Funo:
 - `tp(x, y, z)` — телепортировать только текущего игрока, включая относительные координаты строками (`"~"`, `"~1"`);
 - `run_command("…")` — выполнить серверную команду.
 
-`damage` и `tp` доступны внутри `on player_join(player)` и автоматически получают конкретного игрока события: широкие селекторы вроде `@a` не используются. При каждой сборке Studio обновляет сгенерированный `FunoMinecraft.java`, поэтому новые команды появляются и в ранее созданных проектах.
+`tell`, `give`, `give_custom`, `damage` и `tp` доступны внутри любого player-события и автоматически получают конкретного `player`: широкие селекторы вроде `@a` не используются. При каждой сборке Studio обновляет и `FunoMinecraft.java`, и loader-мост `FunoMod.java`, поэтому f-строки, команды и новые события появляются в ранее созданных проектах без пересоздания.
 
 При сборке `main.fun` превращается в `FunoMain.java`, затем запускается Gradle. Итоговый JAR появляется в `build/libs/`.
 

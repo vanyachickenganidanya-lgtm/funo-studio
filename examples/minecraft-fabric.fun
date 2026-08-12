@@ -7,12 +7,19 @@ mod "hello_funo" {
 
     on server_start {
         broadcast("Сервер Funo запущен!")
-        actionbar("Добро пожаловать")
         run_command("time set day")
     }
 
     on player_join(player) {
-        tell("Привет из Funo!")
+        tell(f"Привет, {player}!")
         give("minecraft:diamond", 1)
+    }
+
+    on block_break(player, block) {
+        broadcast(f"{player} добыл {block}")
+    }
+
+    on player_leave(player) {
+        log(f"{player} покинул мир")
     }
 }

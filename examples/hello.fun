@@ -1,4 +1,4 @@
-fun greet(name: text) -> text = "Привет, " + name
+fun greet(name: text) -> text = f"Привет, {name}"
 
 fun main() {
     text who = readln()

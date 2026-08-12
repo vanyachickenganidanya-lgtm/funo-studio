@@ -134,9 +134,17 @@ mod "hello_funo" {
     }
 
     on player_join(player) {
-        tell("Добро пожаловать!")
+        tell(f"Добро пожаловать, {player}!")
         // damage(2)
         // tp("~", "~1", "~")
+    }
+
+    on block_break(player, block) {
+        log(f"{player} сломал {block}")
+    }
+
+    on player_leave(player) {
+        log(f"{player} покинул мир")
     }
 }
 "#,
@@ -712,10 +720,18 @@ mod "{mod_id}" {{
     }}
 
     on player_join(player) {{
-        tell("Добро пожаловать на сервер!")
+        tell(f"Добро пожаловать, {{player}}!")
         // give("minecraft:diamond", 1)
         // damage(2)
         // tp("~", "~1", "~")
+    }}
+
+    on block_break(player, block) {{
+        log(f"{{player}} сломал {{block}}")
+    }}
+
+    on player_leave(player) {{
+        log(f"{{player}} покинул мир")
     }}
 }}
 "#
@@ -1091,11 +1107,12 @@ side="BOTH"
 }
 
 fn forge_bridge(mod_id: &str, neoforge: bool, minecraft: &str) -> String {
-    let (mod_import, bus_import, subscribe_import, server_import, player_import) = if neoforge {
+    let (mod_import, bus_import, subscribe_import, event_import, server_import, player_import) = if neoforge {
         (
             "net.neoforged.fml.common.Mod",
             "net.neoforged.neoforge.common.NeoForge",
             "net.neoforged.bus.api.SubscribeEvent",
+            "net.neoforged.bus.api.Event",
             "net.neoforged.neoforge.event.server.ServerStartedEvent",
             "net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent",
         )
@@ -1109,6 +1126,7 @@ fn forge_bridge(mod_id: &str, neoforge: bool, minecraft: &str) -> String {
             "net.minecraftforge.fml.common.Mod",
             "net.minecraftforge.common.MinecraftForge",
             "net.minecraftforge.eventbus.api.SubscribeEvent",
+            "net.minecraftforge.eventbus.api.Event",
             server_import,
             "net.minecraftforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent",
         )
@@ -1133,6 +1151,7 @@ fn forge_bridge(mod_id: &str, neoforge: bool, minecraft: &str) -> String {
 import {mod_import};
 import {bus_import};
 import {subscribe_import};
+import {event_import};
 import {server_import};
 import {player_import};
 {extra_import}
@@ -1151,7 +1170,13 @@ public final class FunoMod {{
 
     @SubscribeEvent
     public void onPlayerJoin(PlayerLoggedInEvent event) {{
-        FunoMain.playerJoin(value(event, new String[] {{ "getEntity", "getPlayer" }}, new String[] {{ "player", "entity" }}));
+        FunoMinecraft.playerJoined(value(event, new String[] {{ "getEntity", "getPlayer" }}, new String[] {{ "player", "entity" }}));
+    }}
+
+    /** Version-neutral catch-all for in-world player events on Forge and NeoForge. */
+    @SubscribeEvent
+    public void onPlayerAction(Event event) {{
+        FunoMinecraft.dispatchPlayerEvent(event);
     }}
 
     private static Object value(Object target, String[] methods, String[] fields) {{
@@ -1171,6 +1196,41 @@ pub(crate) fn refresh_minecraft_runtime(root: &Path) -> Result<(), String> {
         .map_err(|error| format!("Не удалось обновить Minecraft API Funo: {error}"))
 }
 
+fn minecraft_manifest_value(manifest: &str, key_name: &str) -> Option<String> {
+    let mut in_minecraft = false;
+    for source_line in manifest.lines() {
+        let line = source_line.split('#').next().unwrap_or("").trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            in_minecraft = line.trim_matches(&['[', ']'][..]).trim() == "minecraft";
+            continue;
+        }
+        if !in_minecraft { continue; }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        if key.trim() == key_name {
+            return Some(value.trim().trim_matches('"').trim_matches('\'').to_string());
+        }
+    }
+    None
+}
+
+/** Migrates both the runtime and loader bridge so existing projects gain new events automatically. */
+pub(crate) fn refresh_minecraft_support(root: &Path, loader: &str, minecraft: &str) -> Result<(), String> {
+    refresh_minecraft_runtime(root)?;
+    let manifest = fs::read_to_string(root.join("funo.toml"))
+        .map_err(|error| format!("Не удалось прочитать funo.toml для обновления Minecraft-моста: {error}"))?;
+    let mod_id = minecraft_manifest_value(&manifest, "mod_id")
+        .ok_or_else(|| "В [minecraft] файла funo.toml не найден mod_id".to_string())?;
+    let bridge = match loader.to_ascii_lowercase().as_str() {
+        "fabric" => FABRIC_BRIDGE.to_string(),
+        "forge" => forge_bridge(&mod_id, false, minecraft),
+        "neoforge" => forge_bridge(&mod_id, true, minecraft),
+        other => return Err(format!("Неизвестный загрузчик Minecraft: {other}")),
+    };
+    let bridge_path = root.join("src/main/java/funo/generated/FunoMod.java");
+    fs::write(bridge_path, bridge)
+        .map_err(|error| format!("Не удалось обновить мост событий Minecraft: {error}"))
+}
+
 fn write_generated_files(root: &Path, resource: &str, resource_content: &str, bridge: &str) -> Result<(), String> {
     let resource_path = root.join("src/main/resources").join(resource);
     let java_dir = root.join("src/main/java/funo/generated");
@@ -1186,6 +1246,32 @@ public final class FunoMain {
     public static void start() { FunoMinecraft.log("Minecraft-мод Funo запущен!"); }
     public static void serverStart(Object server) { FunoMinecraft.bindServer(server); }
     public static void playerJoin(Object player) {}
+    public static void playerLeave(Object player) {}
+    public static void playerTick(Object player) {}
+    public static void blockBreak(Object player, Object block) {}
+    public static void blockPlace(Object player, Object block) {}
+    public static void blockInteract(Object player, Object block) {}
+    public static void itemUse(Object player, Object item) {}
+    public static void itemPickup(Object player, Object item) {}
+    public static void itemDrop(Object player, Object item) {}
+    public static void itemCraft(Object player, Object item) {}
+    public static void itemSmelt(Object player, Object item) {}
+    public static void entityInteract(Object player, Object entity) {}
+    public static void entityAttack(Object player, Object entity) {}
+    public static void entityKill(Object player, Object entity) {}
+    public static void playerDamage(Object player, Object amount) {}
+    public static void playerDeath(Object player, Object detail) {}
+    public static void playerRespawn(Object player, Object detail) {}
+    public static void dimensionChange(Object player, Object dimension) {}
+    public static void chat(Object player, Object message) {}
+    public static void command(Object player, Object command) {}
+    public static void containerOpen(Object player, Object container) {}
+    public static void containerClose(Object player, Object container) {}
+    public static void playerSleep(Object player, Object detail) {}
+    public static void playerWake(Object player, Object detail) {}
+    public static void advancement(Object player, Object advancement) {}
+    public static void playerJump(Object player, Object detail) {}
+    public static void playerEvent(Object player, Object event, Object detail) {}
 }
 "#,
     )
@@ -1199,6 +1285,7 @@ const FABRIC_BRIDGE: &str = r#"package funo.generated;
 import net.fabricmc.api.ModInitializer;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 
 public final class FunoMod implements ModInitializer {
@@ -1206,12 +1293,35 @@ public final class FunoMod implements ModInitializer {
 
     @Override public void onInitialize() {
         FunoMain.start();
-        boolean server = register("net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents", "SERVER_STARTED", args -> FunoMain.serverStart(args[0]));
-        if (!server) register("net.fabricmc.fabric.api.event.server.ServerStartCallback", "EVENT", args -> FunoMain.serverStart(args[0]));
-        register("net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents", "JOIN", args -> FunoMain.playerJoin(player(args[0])));
+        boolean server = register("net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents", "SERVER_STARTED", args -> FunoMain.serverStart(args[0]), true);
+        if (!server) register("net.fabricmc.fabric.api.event.server.ServerStartCallback", "EVENT", args -> FunoMain.serverStart(args[0]), true);
+        register("net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents", "JOIN", args -> FunoMinecraft.playerJoined(player(args[0])), true);
+
+        optional("net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents", "DISCONNECT", "player_leave");
+        optional("net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents", "END_SERVER_TICK", "player_tick");
+        optional("net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents", "AFTER", "block_break");
+        optional("net.fabricmc.fabric.api.event.player.AttackBlockCallback", "EVENT", "block_interact");
+        optional("net.fabricmc.fabric.api.event.player.UseBlockCallback", "EVENT", "block_interact");
+        optional("net.fabricmc.fabric.api.event.player.UseItemCallback", "EVENT", "item_use");
+        optional("net.fabricmc.fabric.api.event.player.AttackEntityCallback", "EVENT", "entity_attack");
+        optional("net.fabricmc.fabric.api.event.player.UseEntityCallback", "EVENT", "entity_interact");
+        optional("net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents", "AFTER_RESPAWN", "player_respawn");
+        optional("net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents", "AFTER_PLAYER_CHANGE_WORLD", "dimension_change");
+        optional("net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents", "AFTER_DAMAGE", "player_damage");
+        optional("net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents", "AFTER_DEATH", "player_death");
+        optional("net.fabricmc.fabric.api.entity.event.v1.ServerEntityCombatEvents", "AFTER_KILLED_OTHER_ENTITY", "entity_kill");
+        optional("net.fabricmc.fabric.api.message.v1.ServerMessageEvents", "CHAT_MESSAGE", "chat");
+        optional("net.fabricmc.fabric.api.entity.event.v1.EntitySleepEvents", "START_SLEEPING", "player_sleep");
+        optional("net.fabricmc.fabric.api.entity.event.v1.EntitySleepEvents", "STOP_SLEEPING", "player_wake");
+        optional("net.fabricmc.fabric.api.event.player.PlayerPickUpItemCallback", "EVENT", "item_pickup");
+        optional("net.fabricmc.fabric.api.event.player.PlayerDropItemCallback", "EVENT", "item_drop");
     }
 
-    private static boolean register(String ownerName, String fieldName, Callback callback) {
+    private static void optional(String ownerName, String fieldName, String eventName) {
+        register(ownerName, fieldName, args -> FunoMinecraft.dispatchFabricEvent(eventName, args), false);
+    }
+
+    private static boolean register(String ownerName, String fieldName, Callback callback, boolean reportMissing) {
         try {
             Class<?> owner = Class.forName(ownerName);
             Object event = owner.getField(fieldName).get(null);
@@ -1224,8 +1334,9 @@ public final class FunoMod implements ModInitializer {
                     if (method.getName().equals("hashCode")) return System.identityHashCode(object);
                     if (method.getName().equals("equals")) return object == args[0];
                 }
-                callback.call(args == null ? new Object[0] : args);
-                return null;
+                Object[] arguments = args == null ? new Object[0] : args;
+                callback.call(arguments);
+                return defaultResult(method, arguments);
             });
             for (Method method : event.getClass().getMethods()) {
                 if (method.getName().equals("register") && method.getParameterCount() == 1) {
@@ -1233,10 +1344,54 @@ public final class FunoMod implements ModInitializer {
                     return true;
                 }
             }
-        } catch (ReflectiveOperationException error) {
-            FunoMinecraft.log("Событие Fabric " + fieldName + " недоступно: " + error.getMessage());
+        } catch (ReflectiveOperationException | LinkageError error) {
+            if (reportMissing) FunoMinecraft.log("Событие Fabric " + fieldName + " недоступно: " + error.getMessage());
         }
         return false;
+    }
+
+    /** Returning PASS/true/default primitives keeps non-void Fabric callbacks non-invasive. */
+    private static Object defaultResult(Method callback, Object[] arguments) {
+        Class<?> type = callback.getReturnType();
+        if (type == void.class) return null;
+        if (type == boolean.class) return true;
+        if (type == byte.class) return (byte) 0;
+        if (type == short.class) return (short) 0;
+        if (type == int.class) return 0;
+        if (type == long.class) return 0L;
+        if (type == float.class) return 0F;
+        if (type == double.class) return 0D;
+        if (type == char.class) return '\0';
+        if (type.isEnum()) {
+            for (Object value : type.getEnumConstants()) if (String.valueOf(value).equalsIgnoreCase("PASS")) return value;
+            Object[] values = type.getEnumConstants();
+            return values.length == 0 ? null : values[0];
+        }
+        try {
+            Field pass = type.getField("PASS");
+            if (Modifier.isStatic(pass.getModifiers())) return pass.get(null);
+        } catch (ReflectiveOperationException ignored) {}
+        Object stack = itemStack(arguments);
+        if (stack != null) {
+            for (Method method : type.getMethods()) {
+                if (Modifier.isStatic(method.getModifiers()) && method.getName().equals("pass") && method.getParameterCount() == 1) {
+                    try { return method.invoke(null, stack); } catch (ReflectiveOperationException | IllegalArgumentException ignored) {}
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Object itemStack(Object[] arguments) {
+        for (Object argument : arguments) if (argument != null && argument.getClass().getSimpleName().contains("ItemStack")) return argument;
+        if (arguments.length >= 3 && arguments[0] != null && arguments[2] != null) {
+            for (Method method : arguments[0].getClass().getMethods()) {
+                if (method.getName().equals("getStackInHand") && method.getParameterCount() == 1) {
+                    try { return method.invoke(arguments[0], arguments[2]); } catch (ReflectiveOperationException | IllegalArgumentException ignored) {}
+                }
+            }
+        }
+        return null;
     }
 
     private static Class<?> callbackInterface(Class<?> type) {
@@ -1274,6 +1429,186 @@ public final class FunoMinecraft {
 
     public static void log(Object value) {
         System.out.println("[Funo] " + String.valueOf(value));
+    }
+
+    public static void playerJoined(Object player) {
+        FunoMain.playerJoin(player);
+        FunoMain.playerEvent(player, "player_join", playerName(player));
+    }
+
+    /** Receives every available Fabric API callback without importing version-specific callback types. */
+    public static void dispatchFabricEvent(String name, Object[] arguments) {
+        if ("player_tick".equals(name)) {
+            Object tickServer = arguments.length == 0 ? null : arguments[0];
+            for (Object player : serverPlayers(tickServer)) dispatchNamed(name, player, playerName(player));
+            return;
+        }
+        if (("player_damage".equals(name) || "player_death".equals(name))
+            && (arguments.length == 0 || !isPlayer(arguments[0]))) return;
+        Object player = findPlayer(arguments);
+        if ("player_respawn".equals(name) && arguments.length > 1 && isPlayer(arguments[1])) player = arguments[1];
+        if (player == null) return;
+        dispatchNamed(name, player, fabricDetail(name, arguments, player));
+    }
+
+    /** Forge/NeoForge catch-all: event types and accessors are intentionally discovered reflectively. */
+    public static void dispatchPlayerEvent(Object event) {
+        if (event == null) return;
+        String simple = event.getClass().getSimpleName();
+        String lower = event.getClass().getName().toLowerCase(java.util.Locale.ROOT);
+        if (ignoredEvent(lower)) return;
+        Object subject = first(event, "getEntity", "getPlayer");
+        Object source = first(event, "getSource", "getDamageSource");
+        Object sourceEntity = source == null ? null : first(source, "getEntity", "getCausingEntity", "getDirectEntity", "getAttacker");
+        Object player = isPlayer(subject) ? subject : (isPlayer(sourceEntity) ? sourceEntity : findPlayer(new Object[] { event, source }));
+        if (player == null || isClientPlayer(player)) return;
+
+        String name = classifyEvent(lower, isPlayer(subject));
+        Object detail = eventDetail(event);
+        if (name != null) dispatchNamed(name, player, detail);
+        else FunoMain.playerEvent(player, eventName(simple), detail);
+    }
+
+    private static boolean ignoredEvent(String event) {
+        return event.contains("serverstarted")
+            || event.contains("loggedin")
+            || event.contains(".client.")
+            || event.contains("render")
+            || event.contains("tooltip")
+            || event.contains("nameformat")
+            || event.contains("loadfromfile")
+            || event.contains("savetofile")
+            || event.contains("permissionschanged")
+            || event.contains("breakspeed")
+            || event.contains("harvestcheck");
+    }
+
+    private static String classifyEvent(String event, boolean playerIsSubject) {
+        if (event.contains("logout") || event.contains("loggedout") || event.contains("disconnect")) return "player_leave";
+        if (event.contains("tick")) return "player_tick";
+        if (event.contains("break")) return "block_break";
+        if (event.contains("place")) return "block_place";
+        if (event.contains("rightclickblock") || event.contains("interactblock")) return "block_interact";
+        if (event.contains("pickup") || event.contains("itempicked")) return "item_pickup";
+        if (event.contains("itemtoss") || event.contains("drop")) return "item_drop";
+        if (event.contains("craft")) return "item_craft";
+        if (event.contains("smelt")) return "item_smelt";
+        if (event.contains("rightclickitem") || event.contains("itemuse")) return "item_use";
+        if (event.contains("entityinteract") || event.contains("rightclickentity")) return "entity_interact";
+        if (event.contains("death")) return playerIsSubject ? "player_death" : "entity_kill";
+        if (event.contains("hurt") || event.contains("damage")) return playerIsSubject ? "player_damage" : "entity_attack";
+        if (event.contains("attack")) return "entity_attack";
+        if (event.contains("respawn") || event.contains("clone")) return "player_respawn";
+        if (event.contains("dimension") || event.contains("travelto")) return "dimension_change";
+        if (event.contains("chat")) return "chat";
+        if (event.contains("command")) return "command";
+        if (event.contains("containeropen") || event.contains("opencontainer")) return "container_open";
+        if (event.contains("containerclose") || event.contains("closecontainer")) return "container_close";
+        if (event.contains("wakeup") || event.contains("stop_sleep")) return "player_wake";
+        if (event.contains("sleep")) return "player_sleep";
+        if (event.contains("advancement")) return "advancement";
+        if (event.contains("jump")) return "player_jump";
+        return null;
+    }
+
+    private static void dispatchNamed(String name, Object player, Object detail) {
+        FunoMain.playerEvent(player, name, detail);
+        if ("player_leave".equals(name)) FunoMain.playerLeave(player);
+        else if ("player_tick".equals(name)) FunoMain.playerTick(player);
+        else if ("block_break".equals(name)) FunoMain.blockBreak(player, detail);
+        else if ("block_place".equals(name)) FunoMain.blockPlace(player, detail);
+        else if ("block_interact".equals(name)) FunoMain.blockInteract(player, detail);
+        else if ("item_use".equals(name)) FunoMain.itemUse(player, detail);
+        else if ("item_pickup".equals(name)) FunoMain.itemPickup(player, detail);
+        else if ("item_drop".equals(name)) FunoMain.itemDrop(player, detail);
+        else if ("item_craft".equals(name)) FunoMain.itemCraft(player, detail);
+        else if ("item_smelt".equals(name)) FunoMain.itemSmelt(player, detail);
+        else if ("entity_interact".equals(name)) FunoMain.entityInteract(player, detail);
+        else if ("entity_attack".equals(name)) FunoMain.entityAttack(player, detail);
+        else if ("entity_kill".equals(name)) FunoMain.entityKill(player, detail);
+        else if ("player_damage".equals(name)) FunoMain.playerDamage(player, detail);
+        else if ("player_death".equals(name)) FunoMain.playerDeath(player, detail);
+        else if ("player_respawn".equals(name)) FunoMain.playerRespawn(player, detail);
+        else if ("dimension_change".equals(name)) FunoMain.dimensionChange(player, detail);
+        else if ("chat".equals(name)) FunoMain.chat(player, detail);
+        else if ("command".equals(name)) FunoMain.command(player, detail);
+        else if ("container_open".equals(name)) FunoMain.containerOpen(player, detail);
+        else if ("container_close".equals(name)) FunoMain.containerClose(player, detail);
+        else if ("player_sleep".equals(name)) FunoMain.playerSleep(player, detail);
+        else if ("player_wake".equals(name)) FunoMain.playerWake(player, detail);
+        else if ("advancement".equals(name)) FunoMain.advancement(player, detail);
+        else if ("player_jump".equals(name)) FunoMain.playerJump(player, detail);
+    }
+
+    private static Object fabricDetail(String name, Object[] arguments, Object player) {
+        if ("block_break".equals(name) && arguments.length > 3) return arguments[3];
+        if ("player_damage".equals(name) && arguments.length > 2) return arguments[2];
+        if ("player_respawn".equals(name) && arguments.length > 2) return arguments[2];
+        if ("dimension_change".equals(name) && arguments.length > 2) return arguments[arguments.length - 1];
+        if ("chat".equals(name) && arguments.length > 0) return arguments[0];
+        if ("item_use".equals(name) && arguments.length > 2) {
+            try { return invoke(player, new String[] { "getStackInHand", "getItemInHand" }, arguments[arguments.length - 1]); }
+            catch (ReflectiveOperationException ignored) {}
+        }
+        for (int index = arguments.length - 1; index >= 0; index--) {
+            Object value = arguments[index];
+            if (value != null && value != player && !isWorldLike(value)) return value;
+        }
+        return name;
+    }
+
+    private static Object eventDetail(Object event) {
+        Object detail = first(event, "getState", "getBlockState", "getPlacedBlock", "getItemStack", "getStack", "getTarget", "getTargetEntity", "getContainer", "getMenuProvider", "getMessage", "getRawText", "getAmount", "getAdvancement", "getTo", "getDimension");
+        return detail == null ? event : detail;
+    }
+
+    private static Object first(Object target, String... names) {
+        if (target == null) return null;
+        for (String name : names) {
+            try { return invoke(target, new String[] { name }); }
+            catch (ReflectiveOperationException ignored) {}
+        }
+        return null;
+    }
+
+    private static Object findPlayer(Object[] values) {
+        if (values == null) return null;
+        for (Object value : values) if (isPlayer(value)) return value;
+        for (Object value : values) {
+            Object nested = first(value, "getPlayer", "getEntity", "getCausingEntity", "getAttacker");
+            if (isPlayer(nested)) return nested;
+        }
+        return null;
+    }
+
+    private static boolean isPlayer(Object value) {
+        if (value == null) return false;
+        String name = value.getClass().getSimpleName().toLowerCase(java.util.Locale.ROOT);
+        if (name.contains("player") && !name.contains("playerlist") && !name.contains("playerinteraction") && !name.contains("playernetwork")) return true;
+        return first(value, "getGameProfile") != null;
+    }
+
+    private static boolean isClientPlayer(Object value) {
+        String name = value.getClass().getName().toLowerCase(java.util.Locale.ROOT);
+        return name.contains("clientplayer") || name.contains("localplayer");
+    }
+
+    private static boolean isWorldLike(Object value) {
+        String name = value.getClass().getSimpleName().toLowerCase(java.util.Locale.ROOT);
+        return name.contains("world") || name.contains("level") || name.contains("server") || name.contains("hand");
+    }
+
+    private static java.util.List<Object> serverPlayers(Object value) {
+        java.util.List<Object> result = new java.util.ArrayList<>();
+        Object manager = first(value, "getPlayerManager", "getPlayerList");
+        Object players = first(manager == null ? value : manager, "getPlayerList", "getPlayers");
+        if (players instanceof Iterable<?>) for (Object player : (Iterable<?>) players) if (isPlayer(player)) result.add(player);
+        return result;
+    }
+
+    private static String eventName(String simple) {
+        String value = simple.endsWith("Event") ? simple.substring(0, simple.length() - 5) : simple;
+        return value.replaceAll("([a-z0-9])([A-Z])", "$1_$2").toLowerCase(java.util.Locale.ROOT);
     }
 
     public static void broadcast(Object value) {
@@ -1376,7 +1711,8 @@ public final class FunoMinecraft {
         }
     }
 
-    private static String playerName(Object player) {
+    /** Stable string representation used by Minecraft f-strings such as {player}. */
+    public static String playerName(Object player) {
         try {
             Object profile = call(player, new String[] { "getGameProfile" });
             return String.valueOf(call(profile, new String[] { "getName" }));
@@ -1465,11 +1801,16 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(runtime.parent().unwrap()).unwrap();
         fs::write(&runtime, "// старая версия").unwrap();
+        fs::write(root.join("funo.toml"), "[minecraft]\nmod_id = \"refresh_test\"\nloader = \"fabric\"\nversion = \"1.20.1\"\n").unwrap();
 
-        refresh_minecraft_runtime(&root).unwrap();
+        refresh_minecraft_support(&root, "fabric", "1.20.1").unwrap();
         let generated = fs::read_to_string(&runtime).unwrap();
         assert!(generated.contains("public static void damage(Object player, Object amount)"));
         assert!(generated.contains("public static void tp(Object player, Object x, Object y, Object z)"));
+        assert!(generated.contains("public static void dispatchPlayerEvent(Object event)"));
+        let bridge = fs::read_to_string(root.join("src/main/java/funo/generated/FunoMod.java")).unwrap();
+        assert!(bridge.contains("PlayerBlockBreakEvents"));
+        assert!(bridge.contains("defaultResult(Method callback"));
         let _ = fs::remove_dir_all(root);
     }
 

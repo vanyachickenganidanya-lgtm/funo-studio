@@ -7,11 +7,21 @@ mod "hello_funo_forge" {
 
     on server_start {
         broadcast("Forge-сервер с Funo запущен!")
-        run_command("time set day")
     }
 
     on player_join(player) {
-        tell("Привет из Funo + Forge!")
-        give("minecraft:diamond", 1)
+        tell(f"Привет из Funo + Forge, {player}!")
+    }
+
+    on block_place(player, block) {
+        log(f"{player} поставил {block}")
+    }
+
+    on entity_attack(player, entity) {
+        actionbar(f"Цель: {entity}")
+    }
+
+    on chat(player, message) {
+        log(f"Чат {player}: {message}")
     }
 }

@@ -253,6 +253,7 @@ fn infer_expression_type(value: &str) -> String {
         return "int[]".into();
     }
     if value.starts_with('"')
+        || value.starts_with("f\"")
         || value.contains(" + \"")
         || value.contains("\" + ")
         || value.starts_with("readln(")
@@ -365,15 +366,189 @@ fn array_literal(value: &str, expected_type: Option<&str>) -> Option<String> {
     Some(format!("new {component}[]{{{values}}}"))
 }
 
-fn expression_to_java_typed(value: &str, expected_type: Option<&str>) -> String {
-    let mut expr = value.trim().trim_end_matches(';').to_string();
+fn fstring_bounds(value: &str, start: usize) -> Option<(usize, String)> {
+    let mut index = start + 2;
+    let mut braces = 0usize;
+    let mut expression_quote = None;
+    let mut escaped = false;
+    while index < value.len() {
+        let character = value[index..].chars().next()?;
+        let width = character.len_utf8();
+        if escaped {
+            escaped = false;
+            index += width;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            index += width;
+            continue;
+        }
+        if braces > 0 {
+            if let Some(quote) = expression_quote {
+                if character == quote {
+                    expression_quote = None;
+                }
+            } else if character == '"' || character == '\'' {
+                expression_quote = Some(character);
+            } else if character == '{' {
+                braces += 1;
+            } else if character == '}' {
+                braces -= 1;
+            }
+        } else if character == '{' {
+            if value[index + width..].starts_with('{') {
+                index += width;
+            } else {
+                braces = 1;
+            }
+        } else if character == '"' {
+            return Some((index + width, value[start + 2..index].to_string()));
+        }
+        index += width;
+    }
+    None
+}
+
+fn fstring_parts(content: &str) -> Vec<(bool, String)> {
+    let mut parts = Vec::new();
+    let mut literal = String::new();
+    let mut index = 0usize;
+    while index < content.len() {
+        let character = content[index..].chars().next().unwrap();
+        let width = character.len_utf8();
+        if character == '{' && content[index + width..].starts_with('{') {
+            literal.push('{');
+            index += width * 2;
+            continue;
+        }
+        if character == '}' && content[index + width..].starts_with('}') {
+            literal.push('}');
+            index += width * 2;
+            continue;
+        }
+        if character != '{' {
+            literal.push(character);
+            index += width;
+            continue;
+        }
+        if !literal.is_empty() {
+            parts.push((false, std::mem::take(&mut literal)));
+        }
+        let expression_start = index + width;
+        index = expression_start;
+        let mut depth = 1usize;
+        let mut quote = None;
+        let mut escaped = false;
+        while index < content.len() && depth > 0 {
+            let current = content[index..].chars().next().unwrap();
+            let current_width = current.len_utf8();
+            if escaped {
+                escaped = false;
+            } else if current == '\\' {
+                escaped = true;
+            } else if let Some(active_quote) = quote {
+                if current == active_quote {
+                    quote = None;
+                }
+            } else if current == '"' || current == '\'' {
+                quote = Some(current);
+            } else if current == '{' {
+                depth += 1;
+            } else if current == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    parts.push((true, content[expression_start..index].trim().to_string()));
+                    index += current_width;
+                    break;
+                }
+            }
+            index += current_width;
+        }
+        if depth > 0 {
+            literal.push_str(&content[expression_start - width..]);
+            break;
+        }
+    }
+    if !literal.is_empty() || parts.is_empty() {
+        parts.push((false, literal));
+    }
+    parts
+}
+
+fn lower_java_fstrings(value: &str, minecraft: bool) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut index = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    while index < value.len() {
+        let character = value[index..].chars().next().unwrap();
+        let width = character.len_utf8();
+        if let Some(active_quote) = quote {
+            output.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active_quote {
+                quote = None;
+            }
+            index += width;
+            continue;
+        }
+        let previous_is_identifier = index > 0
+            && value[..index].chars().next_back().is_some_and(|previous| previous.is_alphanumeric() || previous == '_');
+        if character == 'f' && !previous_is_identifier && value[index + width..].starts_with('"') {
+            if let Some((end, content)) = fstring_bounds(value, index) {
+                let rendered = fstring_parts(&content)
+                    .into_iter()
+                    .filter_map(|(expression, part)| {
+                        if expression {
+                            if part.is_empty() {
+                                return None;
+                            }
+                            let java = if minecraft && part == "player" {
+                                "FunoMinecraft.playerName(player)".to_string()
+                            } else {
+                                expression_to_java_typed_context(&part, None, minecraft)
+                            };
+                            Some(format!("String.valueOf({java})"))
+                        } else if part.is_empty() {
+                            None
+                        } else {
+                            Some(format!("\"{part}\""))
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                output.push('(');
+                if rendered.is_empty() {
+                    output.push_str("\"\"");
+                } else {
+                    output.push_str(&rendered.join(" + "));
+                }
+                output.push(')');
+                index = end;
+                continue;
+            }
+        }
+        if character == '"' || character == '\'' {
+            quote = Some(character);
+        }
+        output.push(character);
+        index += width;
+    }
+    output
+}
+
+fn expression_to_java_typed_context(value: &str, expected_type: Option<&str>, minecraft: bool) -> String {
+    let mut expr = lower_java_fstrings(value.trim().trim_end_matches(';'), minecraft);
     let if_expr = Regex::new(r"^if\s+(.+?)\s+then\s+(.+?)\s+else\s+(.+)$").unwrap();
     if let Some(cap) = if_expr.captures(&expr) {
         expr = format!(
             "({} ? {} : {})",
             replace_word_operators(&cap[1]),
-            expression_to_java_typed(&cap[2], expected_type),
-            expression_to_java_typed(&cap[3], expected_type)
+            expression_to_java_typed_context(&cap[2], expected_type, minecraft),
+            expression_to_java_typed_context(&cap[3], expected_type, minecraft)
         );
     } else if let Some(array) = array_literal(&expr, expected_type) {
         expr = array;
@@ -390,8 +565,20 @@ fn expression_to_java_typed(value: &str, expected_type: Option<&str>) -> String 
     }
 }
 
+fn expression_to_java_typed(value: &str, expected_type: Option<&str>) -> String {
+    expression_to_java_typed_context(value, expected_type, false)
+}
+
 fn expression_to_java(value: &str) -> String {
     expression_to_java_typed(value, None)
+}
+
+fn expression_to_minecraft_java(value: &str) -> String {
+    expression_to_java_typed_context(value, None, true)
+}
+
+fn expression_to_minecraft_java_typed(value: &str, expected_type: Option<&str>) -> String {
+    expression_to_java_typed_context(value, expected_type, true)
 }
 
 fn java_params(params: &str, body_hint: &str) -> String {
@@ -416,6 +603,43 @@ fn java_params(params: &str, body_hint: &str) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
+
+#[derive(Clone, Copy)]
+struct MinecraftEvent {
+    source_name: &'static str,
+    java_name: &'static str,
+    parameters: &'static str,
+}
+
+const MINECRAFT_PLAYER_EVENTS: &[MinecraftEvent] = &[
+    MinecraftEvent { source_name: "player_join", java_name: "playerJoin", parameters: "Object player" },
+    MinecraftEvent { source_name: "player_leave", java_name: "playerLeave", parameters: "Object player" },
+    MinecraftEvent { source_name: "player_tick", java_name: "playerTick", parameters: "Object player" },
+    MinecraftEvent { source_name: "block_break", java_name: "blockBreak", parameters: "Object player, Object block" },
+    MinecraftEvent { source_name: "block_place", java_name: "blockPlace", parameters: "Object player, Object block" },
+    MinecraftEvent { source_name: "block_interact", java_name: "blockInteract", parameters: "Object player, Object block" },
+    MinecraftEvent { source_name: "item_use", java_name: "itemUse", parameters: "Object player, Object item" },
+    MinecraftEvent { source_name: "item_pickup", java_name: "itemPickup", parameters: "Object player, Object item" },
+    MinecraftEvent { source_name: "item_drop", java_name: "itemDrop", parameters: "Object player, Object item" },
+    MinecraftEvent { source_name: "item_craft", java_name: "itemCraft", parameters: "Object player, Object item" },
+    MinecraftEvent { source_name: "item_smelt", java_name: "itemSmelt", parameters: "Object player, Object item" },
+    MinecraftEvent { source_name: "entity_interact", java_name: "entityInteract", parameters: "Object player, Object entity" },
+    MinecraftEvent { source_name: "entity_attack", java_name: "entityAttack", parameters: "Object player, Object entity" },
+    MinecraftEvent { source_name: "entity_kill", java_name: "entityKill", parameters: "Object player, Object entity" },
+    MinecraftEvent { source_name: "player_damage", java_name: "playerDamage", parameters: "Object player, Object amount" },
+    MinecraftEvent { source_name: "player_death", java_name: "playerDeath", parameters: "Object player, Object detail" },
+    MinecraftEvent { source_name: "player_respawn", java_name: "playerRespawn", parameters: "Object player, Object detail" },
+    MinecraftEvent { source_name: "dimension_change", java_name: "dimensionChange", parameters: "Object player, Object dimension" },
+    MinecraftEvent { source_name: "chat", java_name: "chat", parameters: "Object player, Object message" },
+    MinecraftEvent { source_name: "command", java_name: "command", parameters: "Object player, Object command" },
+    MinecraftEvent { source_name: "container_open", java_name: "containerOpen", parameters: "Object player, Object container" },
+    MinecraftEvent { source_name: "container_close", java_name: "containerClose", parameters: "Object player, Object container" },
+    MinecraftEvent { source_name: "player_sleep", java_name: "playerSleep", parameters: "Object player, Object detail" },
+    MinecraftEvent { source_name: "player_wake", java_name: "playerWake", parameters: "Object player, Object detail" },
+    MinecraftEvent { source_name: "advancement", java_name: "advancement", parameters: "Object player, Object advancement" },
+    MinecraftEvent { source_name: "player_jump", java_name: "playerJump", parameters: "Object player, Object detail" },
+    MinecraftEvent { source_name: "player_event", java_name: "playerEvent", parameters: "Object player, Object event, Object detail" },
+];
 
 fn minecraft_event_body(source: &str, event: &str, has_player: bool) -> Vec<String> {
     let header = Regex::new(&format!(
@@ -447,51 +671,51 @@ fn minecraft_event_body(source: &str, event: &str, has_player: bool) -> Vec<Stri
             continue;
         }
         let line = if let Some(value) = trimmed.strip_prefix("log(").and_then(|v| v.strip_suffix(')')) {
-            format!("FunoMinecraft.log({});", expression_to_java(value))
+            format!("FunoMinecraft.log({});", expression_to_minecraft_java(value))
         } else if let Some(value) = trimmed.strip_prefix("define_item(").and_then(|v| v.strip_suffix(')')) {
-            format!("FunoMinecraft.defineItem({});", expression_to_java(value))
+            format!("FunoMinecraft.defineItem({});", expression_to_minecraft_java(value))
         } else if let Some(value) = trimmed.strip_prefix("craft_shapeless(").and_then(|v| v.strip_suffix(')')) {
-            format!("FunoMinecraft.log(\"Рецепт зарегистрирован: \" + String.valueOf({}));", expression_to_java(value.split(',').next().unwrap_or("\"recipe\"")))
+            format!("FunoMinecraft.log(\"Рецепт зарегистрирован: \" + String.valueOf({}));", expression_to_minecraft_java(value.split(',').next().unwrap_or("\"recipe\"")))
         } else if let Some(value) = trimmed.strip_prefix("craft_shaped(").and_then(|v| v.strip_suffix(')')) {
-            format!("FunoMinecraft.log(\"Рецепт зарегистрирован: \" + String.valueOf({}));", expression_to_java(value.split(',').next().unwrap_or("\"recipe\"")))
+            format!("FunoMinecraft.log(\"Рецепт зарегистрирован: \" + String.valueOf({}));", expression_to_minecraft_java(value.split(',').next().unwrap_or("\"recipe\"")))
         } else if let Some(value) = trimmed.strip_prefix("spawn_mob(").and_then(|v| v.strip_suffix(')')) {
-            format!("FunoMinecraft.spawnMob({});", expression_to_java(value))
+            format!("FunoMinecraft.spawnMob({});", expression_to_minecraft_java(value))
         } else if let Some(value) = trimmed.strip_prefix("set_mob_ai(").and_then(|v| v.strip_suffix(')')) {
-            format!("FunoMinecraft.setMobAi({});", expression_to_java(value))
+            format!("FunoMinecraft.setMobAi({});", expression_to_minecraft_java(value))
         } else if let Some(value) = trimmed.strip_prefix("mob_attribute(").and_then(|v| v.strip_suffix(')')) {
-            format!("FunoMinecraft.mobAttribute({});", expression_to_java(value))
+            format!("FunoMinecraft.mobAttribute({});", expression_to_minecraft_java(value))
         } else if let Some(value) = trimmed.strip_prefix("broadcast(").and_then(|v| v.strip_suffix(')')) {
-            format!("FunoMinecraft.broadcast({});", expression_to_java(value))
+            format!("FunoMinecraft.broadcast({});", expression_to_minecraft_java(value))
         } else if let Some(value) = trimmed.strip_prefix("run_command(").and_then(|v| v.strip_suffix(')')) {
-            format!("FunoMinecraft.command({});", expression_to_java(value))
+            format!("FunoMinecraft.command({});", expression_to_minecraft_java(value))
         } else if let Some(value) = trimmed.strip_prefix("actionbar(").and_then(|v| v.strip_suffix(')')) {
-            format!("FunoMinecraft.actionbar({});", expression_to_java(value))
+            format!("FunoMinecraft.actionbar({});", expression_to_minecraft_java(value))
         } else if has_player {
             if let Some(value) = trimmed.strip_prefix("tell(").and_then(|v| v.strip_suffix(')')) {
-                format!("FunoMinecraft.tell(player, {});", expression_to_java(value))
+                format!("FunoMinecraft.tell(player, {});", expression_to_minecraft_java(value))
             } else if let Some(value) = trimmed.strip_prefix("give(").and_then(|v| v.strip_suffix(')')) {
-                format!("FunoMinecraft.give(player, {});", expression_to_java(value))
+                format!("FunoMinecraft.give(player, {});", expression_to_minecraft_java(value))
             } else if let Some(value) = trimmed.strip_prefix("give_custom(").and_then(|v| v.strip_suffix(')')) {
-                format!("FunoMinecraft.giveCustom(player, {});", expression_to_java(value))
+                format!("FunoMinecraft.giveCustom(player, {});", expression_to_minecraft_java(value))
             } else if let Some(value) = trimmed.strip_prefix("damage(").and_then(|v| v.strip_suffix(')')) {
-                format!("FunoMinecraft.damage(player, {});", expression_to_java(value))
+                format!("FunoMinecraft.damage(player, {});", expression_to_minecraft_java(value))
             } else if let Some(value) = trimmed.strip_prefix("tp(").and_then(|v| v.strip_suffix(')')) {
-                format!("FunoMinecraft.tp(player, {});", expression_to_java(value))
+                format!("FunoMinecraft.tp(player, {});", expression_to_minecraft_java(value))
             } else if let Some(cap) = typed_decl.captures(trimmed) {
                 let source_type = format!("{}{}", &cap[1], cap.get(2).map(|v| v.as_str()).unwrap_or(""));
-                format!("{} {} = {};", java_type(&source_type), &cap[3], expression_to_java_typed(&cap[4], Some(&source_type)))
+                format!("{} {} = {};", java_type(&source_type), &cap[3], expression_to_minecraft_java_typed(&cap[4], Some(&source_type)))
             } else if let Some(cap) = assignment.captures(trimmed) {
-                format!("var {} = {};", &cap[1], expression_to_java(&cap[2]))
+                format!("var {} = {};", &cap[1], expression_to_minecraft_java(&cap[2]))
             } else {
-                format!("{};", expression_to_java(trimmed))
+                format!("{};", expression_to_minecraft_java(trimmed))
             }
         } else if let Some(cap) = typed_decl.captures(trimmed) {
             let source_type = format!("{}{}", &cap[1], cap.get(2).map(|v| v.as_str()).unwrap_or(""));
-            format!("{} {} = {};", java_type(&source_type), &cap[3], expression_to_java_typed(&cap[4], Some(&source_type)))
+            format!("{} {} = {};", java_type(&source_type), &cap[3], expression_to_minecraft_java_typed(&cap[4], Some(&source_type)))
         } else if let Some(cap) = assignment.captures(trimmed) {
-            format!("var {} = {};", &cap[1], expression_to_java(&cap[2]))
+            format!("var {} = {};", &cap[1], expression_to_minecraft_java(&cap[2]))
         } else {
-            format!("{};", expression_to_java(trimmed))
+            format!("{};", expression_to_minecraft_java(trimmed))
         };
         body.push(format!("        {line}"));
     }
@@ -506,21 +730,26 @@ fn minecraft_body(source: &str) -> Vec<String> {
     body
 }
 
+fn append_minecraft_event_methods(output: &mut String, source: &str) {
+    for event in MINECRAFT_PLAYER_EVENTS {
+        output.push_str(&format!("    public static void {}({}) {{\n", event.java_name, event.parameters));
+        output.push_str(&minecraft_event_body(source, event.source_name, true).join("\n"));
+        output.push_str("\n    }\n\n");
+    }
+}
+
 fn transpile_minecraft_preview(source: &str, imports: &[String]) -> String {
-    let start = minecraft_body(source);
-    let server_start = minecraft_event_body(source, "server_start", false);
-    let player_join = minecraft_event_body(source, "player_join", true);
     let mut output = String::from("// Сгенерировано Funo для предпросмотра Minecraft\n");
     for import in imports {
         output.push_str(&format!("import {import};\n"));
     }
-    output.push_str("\npublic final class Main {\n    public static void onStart() {\n");
-    output.push_str(&start.join("\n"));
-    output.push_str("\n    }\n\n    public static void onServerStart(Object server) {\n");
-    output.push_str(&server_start.join("\n"));
-    output.push_str("\n    }\n\n    public static void onPlayerJoin(Object player) {\n");
-    output.push_str(&player_join.join("\n"));
-    output.push_str("\n    }\n\n    public static void main(String[] args) {\n        onStart();\n    }\n}\n");
+    output.push_str("\npublic final class Main {\n    public static void start() {\n");
+    output.push_str(&minecraft_body(source).join("\n"));
+    output.push_str("\n    }\n\n    public static void serverStart(Object server) {\n");
+    output.push_str(&minecraft_event_body(source, "server_start", false).join("\n"));
+    output.push_str("\n    }\n\n");
+    append_minecraft_event_methods(&mut output, source);
+    output.push_str("    public static void main(String[] args) {\n        start();\n    }\n}\n");
     output
 }
 
@@ -545,9 +774,8 @@ pub fn transpile_minecraft_entry(source: &str) -> Result<String, Vec<Diagnostic>
     java.push_str("    public static void serverStart(Object server) {\n        FunoMinecraft.bindServer(server);\n");
     java.push_str(&minecraft_event_body(source, "server_start", false).join("\n"));
     java.push_str("\n    }\n\n");
-    java.push_str("    public static void playerJoin(Object player) {\n");
-    java.push_str(&minecraft_event_body(source, "player_join", true).join("\n"));
-    java.push_str("\n    }\n}\n");
+    append_minecraft_event_methods(&mut java, source);
+    java.push_str("}\n");
     Ok(java)
 }
 
@@ -1226,7 +1454,7 @@ pub fn build_minecraft(project_root: &str, source: &str) -> BuildResult {
     if let Err(error) = generate_minecraft_recipes(&root, source) {
         return failed(format!("Не удалось создать рецепты: {error}"), generated_java, started);
     }
-    if let Err(error) = project::refresh_minecraft_runtime(&root) {
+    if let Err(error) = project::refresh_minecraft_support(&root, &loader, &minecraft_version) {
         return failed(error, generated_java, started);
     }
     let generated_path = root.join("src/main/java/funo/generated/FunoMain.java");
@@ -1347,6 +1575,16 @@ mod tests {
     }
 
     #[test]
+    fn lowers_fstrings_inside_java_calls_and_escaped_braces() {
+        let source = r#"fun main() {
+    text name = "Alex"
+    println(f"Игрок {name}: {{готов}}")
+}"#;
+        let java = transpile(source).unwrap();
+        assert!(java.contains(r#"System.out.println(("Игрок " + String.valueOf(name) + ": {готов}"));"#));
+    }
+
+    #[test]
     fn block_return_inference_stops_at_function_boundary() {
         let source = "fun hello() {\n println(\"hello\")\n}\nfun value() -> int {\n return 3\n}";
         let java = transpile(source).unwrap();
@@ -1386,6 +1624,28 @@ mod "player_actions" {
         assert!(java.contains("FunoMinecraft.tp(player, \"Steve\");"));
         assert!(!java.contains("damage @a"));
         assert!(!java.contains("tp @a"));
+    }
+
+    #[test]
+    fn minecraft_fstrings_and_in_world_events_bind_player() {
+        let source = r#"use minecraft.fabric
+mod "event_test" {
+    on block_break(player, block) {
+        tell(f"Игрок {player} сломал {block}")
+    }
+    on player_leave(player) {
+        log(f"{player} вышел")
+    }
+    on player_event(player, event, detail) {
+        log(f"{event}: {detail}")
+    }
+}"#;
+        let java = transpile_minecraft_entry(source).unwrap();
+        assert!(java.contains("public static void blockBreak(Object player, Object block)"));
+        assert!(java.contains("public static void playerLeave(Object player)"));
+        assert!(java.contains("public static void playerEvent(Object player, Object event, Object detail)"));
+        assert!(java.contains("String.valueOf(FunoMinecraft.playerName(player))"));
+        assert!(java.contains("String.valueOf(block)"));
     }
 
     #[test]
