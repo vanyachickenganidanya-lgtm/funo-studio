@@ -210,6 +210,32 @@ fn infer_return(name: &str, declared: Option<&str>, expression: &str, block_sour
 
 fn infer_expression_type(value: &str) -> String {
     let value = value.trim();
+    // The condition of an `if ... then ... else ...` expression is boolean,
+    // but the expression itself has the type of its result branches.
+    if let Some(captures) = Regex::new(r"^if\s+.+?\s+then\s+(.+?)\s+else\s+(.+)$")
+        .unwrap()
+        .captures(value)
+    {
+        let then_type = infer_expression_type(&captures[1]);
+        let else_type = infer_expression_type(&captures[2]);
+        return if then_type == else_type {
+            then_type
+        } else if matches!(then_type.as_str(), "int" | "long" | "float" | "double")
+            && matches!(else_type.as_str(), "int" | "long" | "float" | "double")
+        {
+            if then_type == "double" || else_type == "double" {
+                "double".into()
+            } else if then_type == "float" || else_type == "float" {
+                "float".into()
+            } else if then_type == "long" || else_type == "long" {
+                "long".into()
+            } else {
+                "int".into()
+            }
+        } else {
+            "Object".into()
+        };
+    }
     if value.starts_with('[') && value.ends_with(']') {
         let values = &value[1..value.len() - 1];
         if values.trim().is_empty() {
@@ -603,8 +629,8 @@ pub fn transpile(source: &str) -> Result<String, Vec<Diagnostic>> {
             let name = &cap[1];
             let params = &cap[2];
             let declared = cap.get(3).map(|m| m.as_str());
+            let ret = infer_return(name, declared, &cap[4], "");
             let expr = expression_to_java_typed(&cap[4], declared);
-            let ret = infer_return(name, declared, &expr, "");
             if name == "main" {
                 java.push_str(&format!(
                     "    public static void main(String[] args) {{\n        {expr};\n    }}\n\n"
