@@ -430,7 +430,7 @@ async function renderMinecraftToolchains(
     <section class="reserve-policy"><div>${icon('warning')}</div><p><b>После установки обязательно останется не меньше 30 ГиБ.</b><br>Нужно свободно ${formatBytes(status.reserve_bytes + status.estimated_install_bytes)}: резерв 30 ГиБ плюс архивы и файлы JDK/Gradle. Установка на неподходящий диск заблокирована и повторно проверяется backend-ом.</p></section>
     ${currentBlocked && alternatives.length ? `<div class="alternative-notice"><b>На текущем диске недостаточно места.</b><span>Выберите другой доступный диск: ${alternatives.map(volume => escapeHtml(volume.id)).join(', ')}.</span></div>` : ''}
     <section class="volume-picker"><header><div><h2>Куда установить управляемые инструменты</h2><p>Проекты не перемещаются. На выбранном диске появится отдельная папка Funo Studio.</p></div><span>${status.volumes.filter(volume => volume.eligible).length} доступно</span></header><div>${volumeCards || '<p class="error">Не удалось найти доступные диски.</p>'}</div></section>
-    <div class="toolchain-actions"><div><b class="${status.ready ? 'success' : 'error'}">${status.ready ? 'Инструменты готовы' : 'Нужна настройка'}</b><span>${escapeHtml(status.message)}</span></div><button class="primary big" id="installToolchain" ${needsInstall && status.volumes.some(volume => volume.eligible) ? '' : 'disabled'}>${needsInstall ? status.ready ? 'Установить обновления' : 'Установить JDK и Gradle' : 'Всё обновлено'}</button></div>
+    <div class="toolchain-actions"><div><b class="${status.ready ? 'success' : 'error'}">${status.ready ? 'Инструменты готовы' : 'Нужна настройка'}</b><span>${escapeHtml(status.message)}</span></div><button class="primary big" id="installToolchain" ${needsInstall && status.volumes.some(volume => volume.eligible) ? '' : 'disabled'}>${status.ready ? 'Обновить JDK и Gradle' : 'Установить JDK и Gradle'}</button></div>
   </div>`);
   document.getElementById('toolchainBack')!.onclick = goBack;
   document.getElementById('checkToolUpdates')!.onclick = () => void renderMinecraftToolchains(projectRoot, minecraftVersion, loader, launcherInstanceId, true, returnView);
@@ -439,7 +439,7 @@ async function renderMinecraftToolchains(
     const destination = document.querySelector<HTMLInputElement>('input[name="toolVolume"]:checked')?.value;
     if (!destination) { toast('Выберите диск, на котором после установки останется 30 ГиБ.', 'warn'); return; }
     installButton.disabled = true;
-    installButton.textContent = 'Скачиваю и проверяю SHA-256…';
+    installButton.textContent = status.ready ? 'Обновляю и проверяю SHA-256…' : 'Скачиваю и проверяю SHA-256…';
     try {
       const installed = await installMinecraftToolchain(projectRoot, minecraftVersion, loader, destination);
       toast(installed.message);

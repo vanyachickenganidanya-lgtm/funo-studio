@@ -487,6 +487,14 @@ fn path_on_volume(path: &Path, root: &Path) -> bool {
     }
 }
 
+fn available_after_install(free_bytes: u64, install_bytes: u64) -> u64 {
+    free_bytes.saturating_sub(install_bytes)
+}
+
+fn preserves_free_space_reserve(free_bytes: u64, install_bytes: u64) -> bool {
+    available_after_install(free_bytes, install_bytes) >= FREE_SPACE_RESERVE
+}
+
 fn storage_volumes(project_root: &Path, install_bytes: u64) -> Result<Vec<StorageVolume>, String> {
     #[cfg(windows)]
     let raw = windows_volumes()?;
@@ -519,15 +527,14 @@ fn storage_volumes(project_root: &Path, install_bytes: u64) -> Result<Vec<Storag
             } else {
                 root.join("Funo Studio").join("tools")
             };
-            let needed = FREE_SPACE_RESERVE.saturating_add(install_bytes);
             StorageVolume {
                 id,
                 root: root.to_string_lossy().to_string(),
                 install_root: install_root.to_string_lossy().to_string(),
                 free_bytes: free,
                 total_bytes: total,
-                available_after_bytes: free.saturating_sub(install_bytes),
-                eligible: free >= needed,
+                available_after_bytes: available_after_install(free, install_bytes),
+                eligible: preserves_free_space_reserve(free, install_bytes),
                 current: current_index == Some(index),
             }
         })
@@ -733,21 +740,27 @@ pub async fn status(
         return Ok(status);
     }
 
-    if let Ok(package) = jdk_package(status.required_java).await {
-        status.jdk.latest_version = package.version.clone();
-        status.jdk.update_available = status.jdk.compatible
-            && !status.jdk.version.is_empty()
-            && release_newer(&package.version, &status.jdk.version);
+    let mut update_errors = Vec::new();
+    match jdk_package(status.required_java).await {
+        Ok(package) => {
+            status.jdk.latest_version = package.version.clone();
+            status.jdk.update_available = status.jdk.compatible
+                && !status.jdk.version.is_empty()
+                && release_newer(&package.version, &status.jdk.version);
+        }
+        Err(error) => update_errors.push(format!("JDK: {error}")),
     }
     if status.required_java >= 25 {
-        if let Ok(version) = current_gradle_version().await {
-            if gradle_compatible(&version, &status.recommended_gradle) {
+        match current_gradle_version().await {
+            Ok(version) if gradle_compatible(&version, &status.recommended_gradle) => {
                 status.recommended_gradle = version.clone();
                 status.gradle.latest_version = version.clone();
                 status.gradle.update_available = status.gradle.compatible
                     && !status.gradle.version.is_empty()
                     && release_newer(&version, &status.gradle.version);
             }
+            Ok(_) => update_errors.push("Gradle: официальный выпуск несовместим с проектом".into()),
+            Err(error) => update_errors.push(format!("Gradle: {error}")),
         }
     } else {
         status.gradle.latest_version = status.recommended_gradle.clone();
@@ -757,7 +770,12 @@ pub async fn status(
     }
     status.has_updates = status.jdk.update_available || status.gradle.update_available;
     status.message = if status.has_updates {
-        "Для инструментов Minecraft доступны обновления. Выберите диск и нажмите «Обновить инструменты».".into()
+        "Для инструментов Minecraft доступны обновления. Выберите диск и нажмите «Обновить JDK и Gradle».".into()
+    } else if !update_errors.is_empty() {
+        format!(
+            "Локальные версии проверены, но каталог обновлений сейчас недоступен: {}",
+            update_errors.join("; ")
+        )
     } else if status.ready {
         "JDK и Gradle готовы, доступных совместимых обновлений нет.".into()
     } else {
@@ -1089,8 +1107,11 @@ mod tests {
 
     #[test]
     fn reserve_is_checked_after_installation() {
-        let free = FREE_SPACE_RESERVE + JDK_INSTALL_ESTIMATE + GRADLE_INSTALL_ESTIMATE;
-        assert!(free >= FREE_SPACE_RESERVE + JDK_INSTALL_ESTIMATE + GRADLE_INSTALL_ESTIMATE);
-        assert!((free - (JDK_INSTALL_ESTIMATE + GRADLE_INSTALL_ESTIMATE)) >= FREE_SPACE_RESERVE);
+        let install = JDK_INSTALL_ESTIMATE + GRADLE_INSTALL_ESTIMATE;
+        let exact = FREE_SPACE_RESERVE + install;
+        assert_eq!(available_after_install(exact, install), FREE_SPACE_RESERVE);
+        assert!(preserves_free_space_reserve(exact, install));
+        assert!(!preserves_free_space_reserve(exact - 1, install));
+        assert!(!preserves_free_space_reserve(install - 1, install));
     }
 }
