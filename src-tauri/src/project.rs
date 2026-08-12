@@ -1457,9 +1457,9 @@ public final class FunoMinecraft {
         String simple = event.getClass().getSimpleName();
         String lower = event.getClass().getName().toLowerCase(java.util.Locale.ROOT);
         if (ignoredEvent(lower)) return;
-        Object subject = first(event, "getEntity", "getPlayer");
-        Object source = first(event, "getSource", "getDamageSource");
-        Object sourceEntity = source == null ? null : first(source, "getEntity", "getCausingEntity", "getDirectEntity", "getAttacker");
+        Object subject = first(event, "getEntity", "getPlayer", "entity", "player", "entityPlayer");
+        Object source = first(event, "getSource", "getDamageSource", "source", "damageSource");
+        Object sourceEntity = source == null ? null : first(source, "getEntity", "getCausingEntity", "getDirectEntity", "getAttacker", "entity", "causingEntity", "attacker");
         Object player = isPlayer(subject) ? subject : (isPlayer(sourceEntity) ? sourceEntity : findPlayer(new Object[] { event, source }));
         if (player == null || isClientPlayer(player)) return;
 
@@ -1567,15 +1567,27 @@ public final class FunoMinecraft {
         for (String name : names) {
             try { return invoke(target, new String[] { name }); }
             catch (ReflectiveOperationException ignored) {}
+            for (String fieldName : fieldNames(name)) {
+                try { return target.getClass().getField(fieldName).get(target); }
+                catch (ReflectiveOperationException ignored) {}
+            }
         }
         return null;
+    }
+
+    private static String[] fieldNames(String name) {
+        if (name.startsWith("get") && name.length() > 3) {
+            String property = Character.toLowerCase(name.charAt(3)) + name.substring(4);
+            return new String[] { name, property };
+        }
+        return new String[] { name };
     }
 
     private static Object findPlayer(Object[] values) {
         if (values == null) return null;
         for (Object value : values) if (isPlayer(value)) return value;
         for (Object value : values) {
-            Object nested = first(value, "getPlayer", "getEntity", "getCausingEntity", "getAttacker");
+            Object nested = first(value, "getPlayer", "getEntity", "getCausingEntity", "getAttacker", "entityPlayer");
             if (isPlayer(nested)) return nested;
         }
         return null;
