@@ -849,11 +849,7 @@ tasks.withType(JavaCompile).configureEach {{ options.encoding = 'UTF-8' }}
         .and_then(|minecraft| profile.loader_version.strip_prefix(&(minecraft + "-")).map(str::to_string))
         .and_then(|loader| numeric_parts(&loader).first().copied())
         .unwrap_or(1);
-    let required = if version_at_least(&profile.minecraft, 1, 20, 5) || !profile.minecraft.starts_with("1.") {
-        "type=\"required\""
-    } else {
-        "mandatory=true"
-    };
+    let required = "mandatory=true";
     let toml = format!(
         r#"modLoader="javafml"
 loaderVersion="[{loader_major},)"
