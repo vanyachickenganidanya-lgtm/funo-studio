@@ -1,4 +1,4 @@
-use crate::{auth, models::MinecraftInstance, process};
+use crate::{auth, models::MinecraftInstance, toolchains};
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 
 fn instances_path() -> Result<PathBuf, String> {
@@ -146,6 +146,17 @@ pub async fn launch_instance(id: &str) -> Result<String, String> {
     if !project.join("funo.toml").exists() {
         return Err("Проект этой сборки был перемещён или удалён".into());
     }
+    let toolchain = toolchains::local_status(
+        &project,
+        &instance.minecraft_version,
+        &instance.loader,
+    )?;
+    if !toolchain.ready {
+        return Err(format!(
+            "{}. Откройте раздел Minecraft → «JDK и Gradle», выберите диск и установите недостающие инструменты.",
+            toolchain.message
+        ));
+    }
     fs::create_dir_all(PathBuf::from(&instance.game_dir).join("mods")).map_err(|error| error.to_string())?;
     let jvm_args = parse_arguments(&instance.jvm_args)?;
     let mut game_args = parse_arguments(&instance.game_args)?;
@@ -183,18 +194,11 @@ gradle.projectsEvaluated {{
         directory = groovy(&instance.game_dir),
     );
     fs::write(&init_path, init).map_err(|error| error.to_string())?;
-    let wrapper = project.join(if cfg!(windows) { "gradlew.bat" } else { "gradlew" });
-    let mut command = if wrapper.exists() {
-        if cfg!(windows) {
-            process::command(&wrapper)
-        } else {
-            let mut value = process::command("sh");
-            value.arg(&wrapper);
-            value
-        }
-    } else {
-        process::command("gradle")
-    };
+    let mut command = toolchains::prepare_gradle_command(
+        &project,
+        &instance.minecraft_version,
+        &instance.loader,
+    )?;
     let output = command
         .arg(&instance.launch_task)
         .arg("--init-script")

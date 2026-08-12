@@ -368,7 +368,7 @@ fn is_supported_fabric_version(version: &str) -> bool {
         || is_weekly_snapshot(version)
 }
 
-fn java_for_minecraft(version: &str) -> u8 {
+pub(crate) fn java_for_minecraft(version: &str) -> u8 {
     if is_calendar_release(version) || is_weekly_snapshot(version) {
         25
     } else if version_at_least(version, 1, 20, 5) {

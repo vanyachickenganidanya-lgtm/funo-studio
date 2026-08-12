@@ -11,11 +11,12 @@ pub mod process;
 pub mod project;
 pub mod registry;
 pub mod settings;
+pub mod toolchains;
 
 use models::{
-    BuildResult, Diagnostic, MinecraftAccount, MinecraftInstance, MicrosoftAuthChallenge,
-    ModrinthProject, PluginCheck, PluginProject, Project, RegistryPackage, RegistryResponse,
-    StudioSettings,
+    BuildResult, Diagnostic, MinecraftAccount, MinecraftInstance, MinecraftToolchainStatus,
+    MicrosoftAuthChallenge, ModrinthProject, PluginCheck, PluginProject, Project,
+    RegistryPackage, RegistryResponse, StudioSettings,
 };
 
 fn task_error(label: &str, error: impl std::fmt::Display) -> BuildResult {
@@ -152,6 +153,38 @@ async fn launch_instance(id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn minecraft_toolchain_status(
+    project_root: String,
+    minecraft_version: String,
+    loader: String,
+    check_updates: bool,
+) -> Result<MinecraftToolchainStatus, String> {
+    toolchains::status(
+        &project_root,
+        &minecraft_version,
+        &loader,
+        check_updates,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn install_minecraft_toolchain(
+    project_root: String,
+    minecraft_version: String,
+    loader: String,
+    destination_root: String,
+) -> Result<MinecraftToolchainStatus, String> {
+    toolchains::install(
+        &project_root,
+        &minecraft_version,
+        &loader,
+        &destination_root,
+    )
+    .await
+}
+
+#[tauri::command]
 async fn search_modrinth(query: String, loader: String, game_version: String) -> Result<Vec<ModrinthProject>, String> {
     modrinth::search(&query, &loader, &game_version).await
 }
@@ -235,6 +268,8 @@ pub fn run() {
             update_instance,
             delete_instance,
             launch_instance,
+            minecraft_toolchain_status,
+            install_minecraft_toolchain,
             search_modrinth,
             install_modrinth,
             remove_instance_mod,

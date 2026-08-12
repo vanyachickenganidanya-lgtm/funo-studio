@@ -38,6 +38,42 @@ export type MinecraftVersion = {
   java: number;
 };
 
+export type MinecraftToolStatus = {
+  found: boolean;
+  compatible: boolean;
+  managed: boolean;
+  version: string;
+  latest_version: string;
+  path: string;
+  detail: string;
+  update_available: boolean;
+};
+
+export type StorageVolume = {
+  id: string;
+  root: string;
+  install_root: string;
+  free_bytes: number;
+  total_bytes: number;
+  available_after_bytes: number;
+  eligible: boolean;
+  current: boolean;
+};
+
+export type MinecraftToolchainStatus = {
+  required_java: number;
+  recommended_gradle: string;
+  reserve_bytes: number;
+  estimated_install_bytes: number;
+  jdk: MinecraftToolStatus;
+  gradle: MinecraftToolStatus;
+  volumes: StorageVolume[];
+  recommended_install_root: string;
+  ready: boolean;
+  has_updates: boolean;
+  message: string;
+};
+
 export type RegistryPackage = {
   id: string;
   name: string;
@@ -178,6 +214,43 @@ function minecraftJava(version: string): number {
 export async function fetchMinecraftVersions(loader: string): Promise<MinecraftVersion[]> {
   if (isTauri()) return invoke<MinecraftVersion[]>('minecraft_versions', { loader });
   return (browserMinecraftVersions[loader] || []).map(id => ({ id, label: id, stable: true, java: minecraftJava(id) }));
+}
+
+export async function minecraftToolchainStatus(
+  projectRoot: string,
+  minecraftVersion: string,
+  loader: string,
+  checkUpdates = false
+): Promise<MinecraftToolchainStatus> {
+  if (isTauri()) return invoke<MinecraftToolchainStatus>('minecraft_toolchain_status', { projectRoot, minecraftVersion, loader, checkUpdates });
+  const requiredJava = minecraftJava(minecraftVersion);
+  const reserveBytes = 30 * 1024 ** 3;
+  const jdkSize = 220 * 1024 ** 2;
+  const gradleSize = 150 * 1024 ** 2;
+  const recommendedGradle = requiredJava >= 25 ? '9.4.0' : requiredJava >= 21 ? '8.14.3' : '8.8';
+  return {
+    required_java: requiredJava, recommended_gradle: recommendedGradle, reserve_bytes: reserveBytes,
+    estimated_install_bytes: jdkSize + gradleSize, recommended_install_root: '~/Funo Studio/tools',
+    ready: false, has_updates: checkUpdates, message: 'Предпросмотр: в desktop-версии Studio проверит JDK и Gradle.',
+    jdk: { found: false, compatible: false, managed: false, version: '', latest_version: String(requiredJava), path: '', detail: `Нужен JDK ${requiredJava}`, update_available: false },
+    gradle: { found: false, compatible: false, managed: false, version: '', latest_version: recommendedGradle, path: '', detail: 'Нужен совместимый Gradle', update_available: false },
+    volumes: [{ id: 'Системный диск', root: '/', install_root: '~/Funo Studio/tools', free_bytes: 80 * 1024 ** 3, total_bytes: 128 * 1024 ** 3, available_after_bytes: 80 * 1024 ** 3 - jdkSize - gradleSize, eligible: true, current: true }]
+  };
+}
+
+export async function installMinecraftToolchain(
+  projectRoot: string,
+  minecraftVersion: string,
+  loader: string,
+  destinationRoot: string
+): Promise<MinecraftToolchainStatus> {
+  if (isTauri()) return invoke<MinecraftToolchainStatus>('install_minecraft_toolchain', { projectRoot, minecraftVersion, loader, destinationRoot });
+  const status = await minecraftToolchainStatus(projectRoot, minecraftVersion, loader);
+  status.ready = true;
+  status.message = 'Предпросмотр: JDK и Gradle установлены.';
+  status.jdk = { ...status.jdk, found: true, compatible: true, managed: true, version: String(status.required_java), path: destinationRoot, detail: `JDK ${status.required_java} готов` };
+  status.gradle = { ...status.gradle, found: true, compatible: true, managed: true, version: status.recommended_gradle, path: destinationRoot, detail: `Gradle ${status.recommended_gradle} готов` };
+  return status;
 }
 
 export async function createMinecraftProject(

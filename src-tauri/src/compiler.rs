@@ -1,4 +1,4 @@
-use crate::{models::{BuildResult, Diagnostic}, process};
+use crate::{models::{BuildResult, Diagnostic}, process, toolchains};
 use regex::Regex;
 use std::{fs, path::PathBuf, time::Instant};
 
@@ -1187,6 +1187,24 @@ pub fn build_minecraft(project_root: &str, source: &str) -> BuildResult {
         Ok(root) => root,
         Err(error) => return failed(error, generated_java, started),
     };
+    let (minecraft_version, loader) = match toolchains::project_requirements(&root) {
+        Ok(requirements) => requirements,
+        Err(error) => return failed(error, generated_java, started),
+    };
+    let toolchain = match toolchains::local_status(&root, &minecraft_version, &loader) {
+        Ok(status) => status,
+        Err(error) => return failed(error, generated_java, started),
+    };
+    if !toolchain.ready {
+        return failed(
+            format!(
+                "{}. Откройте раздел Minecraft → «JDK и Gradle», выберите диск и установите недостающие инструменты.",
+                toolchain.message
+            ),
+            generated_java,
+            started,
+        );
+    }
     if let Err(error) = generate_minecraft_recipes(&root, source) {
         return failed(format!("Не удалось создать рецепты: {error}"), generated_java, started);
     }
@@ -1208,22 +1226,11 @@ pub fn build_minecraft(project_root: &str, source: &str) -> BuildResult {
         );
     }
 
-    let gradlew = root.join(if cfg!(windows) { "gradlew.bat" } else { "gradlew" });
-    let mut command = if gradlew.exists() {
-        if cfg!(windows) {
-            let mut cmd = process::command(&gradlew);
-            cmd.arg("build");
-            cmd
-        } else {
-            let mut cmd = process::command("sh");
-            cmd.arg(&gradlew).arg("build");
-            cmd
-        }
-    } else {
-        let mut cmd = process::command("gradle");
-        cmd.arg("build");
-        cmd
+    let mut command = match toolchains::prepare_gradle_command(&root, &minecraft_version, &loader) {
+        Ok(command) => command,
+        Err(error) => return failed(error, generated_java, started),
     };
+    command.arg("build");
     let output = match command.current_dir(&root).output() {
         Ok(output) => output,
         Err(error) => {

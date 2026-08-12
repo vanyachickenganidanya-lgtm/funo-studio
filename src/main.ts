@@ -4,14 +4,16 @@ import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import { registerFunoLanguage, setDiagnostics } from './funo-language';
 import {
   ensureProject, saveFile, checkCode, runCode, buildMinecraft, fetchRegistry, installPackage,
-  fetchMinecraftVersions, createMinecraftProject, createFolder, reloadProject, setPathHidden,
+  fetchMinecraftVersions, createMinecraftProject, minecraftToolchainStatus, installMinecraftToolchain,
+  createFolder, reloadProject, setPathHidden,
   loadSettings, saveSettings, getPathStatus, installPath, uninstallPath, runBackend,
   listInstances, createInstance, updateInstance, deleteInstance, launchInstance,
   searchModrinth, installModrinth, removeInstanceMod,
   createPlugin, checkPlugin, installPlugin, listPlugins,
   beginMicrosoftAuth, completeMicrosoftAuth, currentMicrosoftAccount, logoutMicrosoft,
   type Project, type Diagnostic, type RegistryPackage, type MinecraftVersion, type StudioSettings,
-  type MinecraftInstance, type ModrinthProject, type PluginProject, type MinecraftAccount
+  type MinecraftInstance, type MinecraftToolchainStatus, type ModrinthProject, type PluginProject,
+  type MinecraftAccount
 } from './api';
 
 (self as any).MonacoEnvironment = { getWorker: () => new EditorWorker() };
@@ -376,8 +378,82 @@ function packageCard(p: RegistryPackage) {
   return `<article class="package-card" data-search="${`${p.name} ${p.id} ${p.description}`.toLowerCase()}"><div class="package-icon">${p.kind === 'minecraft' ? icon('cube') : p.kind === 'java' ? icon('java') : icon('package')}</div><div class="package-main"><h3>${p.name}${p.verified ? `<span class="verified" title="SHA-256 указан">${icon('check')}</span>` : ''}</h3><code>${p.id}@${p.version}</code><p>${p.description}</p><footer><span>${p.kind}</span><button class="primary small install-package" data-id="${p.id}">Установить</button></footer></div></article>`;
 }
 
+function formatBytes(bytes: number) {
+  const gib = bytes / 1024 ** 3;
+  return `${gib >= 10 ? gib.toFixed(0) : gib.toFixed(1)} ГиБ`;
+}
+
+function minecraftRequirements() {
+  const manifest = project.files.find(file => file.path === 'funo.toml')?.content || '';
+  return {
+    version: manifestValue(manifest, 'minecraft', 'version') || '1.21.1',
+    loader: manifestValue(manifest, 'minecraft', 'loader') || project.kind.replace('minecraft-', '') || 'fabric'
+  };
+}
+
+async function renderMinecraftToolchains(
+  projectRoot = project.root,
+  minecraftVersion = minecraftRequirements().version,
+  loader = minecraftRequirements().loader,
+  launcherInstanceId?: string,
+  checkUpdates = false,
+  returnView: 'minecraft' | 'settings' = 'minecraft'
+) {
+  const goBack = () => launcherInstanceId
+    ? void renderLauncher(launcherInstanceId)
+    : returnView === 'settings' ? void renderSettings() : renderMinecraft();
+  showSurface(`<div class="loading">${icon('refresh')} Проверяю JDK, Gradle и свободное место…</div>`);
+  let status: MinecraftToolchainStatus;
+  try {
+    status = await minecraftToolchainStatus(projectRoot, minecraftVersion, loader, checkUpdates);
+  } catch (error) {
+    showSurface(`<div class="surface-page toolchains-page"><div class="page-hero"><div><span class="overline">MINECRAFT TOOLCHAIN</span><h1>Не удалось проверить инструменты</h1><p class="error">${escapeHtml(String(error))}</p></div><button class="secondary" id="toolchainBack">← Назад</button></div></div>`);
+    document.getElementById('toolchainBack')!.onclick = goBack;
+    return;
+  }
+  const alternatives = status.volumes.filter(volume => !volume.current && volume.eligible);
+  const currentBlocked = status.volumes.some(volume => volume.current && !volume.eligible);
+  const toolCard = (tool: MinecraftToolchainStatus['jdk'], kind: 'jdk' | 'gradle') => `<article class="tool-status ${tool.compatible ? 'ready' : 'missing'}">
+    <div class="tool-status-icon">${tool.compatible ? icon('check') : icon('warning')}</div>
+    <div><span>${kind === 'jdk' ? 'JAVA DEVELOPMENT KIT' : 'GRADLE'}</span><h2>${kind === 'jdk' ? `JDK ${status.required_java}` : `Gradle ${escapeHtml(status.recommended_gradle)}`}</h2><p>${escapeHtml(tool.detail)}</p>${tool.path ? `<code>${escapeHtml(tool.path)}</code>` : ''}</div>
+    <div class="tool-version"><b>${tool.version ? escapeHtml(tool.version) : 'не найден'}</b><small>${tool.managed ? 'управляется Funo' : tool.path.endsWith('gradle-wrapper.properties') ? 'wrapper проекта' : tool.found ? 'системный' : 'требуется установка'}</small>${tool.update_available ? `<em>обновление ${escapeHtml(tool.latest_version)}</em>` : ''}</div>
+  </article>`;
+  const volumeCards = status.volumes.map((volume, index) => `<label class="volume-card ${volume.eligible ? '' : 'blocked'} ${volume.current ? 'current' : ''}">
+    <input type="radio" name="toolVolume" value="${escapeHtml(volume.install_root)}" ${volume.eligible && (volume.current || !status.volumes.some(item => item.current && item.eligible)) && (volume.current || index === status.volumes.findIndex(item => item.eligible)) ? 'checked' : ''} ${volume.eligible ? '' : 'disabled'}>
+    <span><b>${escapeHtml(volume.id)}${volume.current ? ' · текущий' : ''}</b><small>После установки останется ${formatBytes(volume.available_after_bytes)}</small><code>${escapeHtml(volume.install_root)}</code></span>
+    <strong>${formatBytes(volume.free_bytes)}<small>свободно</small></strong>
+  </label>`).join('');
+  const needsInstall = !status.ready || status.has_updates;
+  showSurface(`<div class="surface-page toolchains-page">
+    <div class="page-hero"><div><span class="overline">MINECRAFT TOOLCHAIN</span><h1>JDK и Gradle</h1><p>${escapeHtml(loader)} · Minecraft ${escapeHtml(minecraftVersion)} · Java ${status.required_java}. Studio проверяет совместимость перед сборкой и запуском.</p></div><div class="hero-actions"><button class="secondary" id="toolchainBack">← Назад</button><button class="secondary" id="checkToolUpdates">${icon('refresh')} ${checkUpdates ? 'Проверено' : 'Проверить обновления'}</button></div></div>
+    <div class="tool-status-list">${toolCard(status.jdk, 'jdk')}${toolCard(status.gradle, 'gradle')}</div>
+    <section class="reserve-policy"><div>${icon('warning')}</div><p><b>После установки обязательно останется не меньше 30 ГиБ.</b><br>Нужно свободно ${formatBytes(status.reserve_bytes + status.estimated_install_bytes)}: резерв 30 ГиБ плюс архивы и файлы JDK/Gradle. Установка на неподходящий диск заблокирована и повторно проверяется backend-ом.</p></section>
+    ${currentBlocked && alternatives.length ? `<div class="alternative-notice"><b>На текущем диске недостаточно места.</b><span>Выберите другой доступный диск: ${alternatives.map(volume => escapeHtml(volume.id)).join(', ')}.</span></div>` : ''}
+    <section class="volume-picker"><header><div><h2>Куда установить управляемые инструменты</h2><p>Проекты не перемещаются. На выбранном диске появится отдельная папка Funo Studio.</p></div><span>${status.volumes.filter(volume => volume.eligible).length} доступно</span></header><div>${volumeCards || '<p class="error">Не удалось найти доступные диски.</p>'}</div></section>
+    <div class="toolchain-actions"><div><b class="${status.ready ? 'success' : 'error'}">${status.ready ? 'Инструменты готовы' : 'Нужна настройка'}</b><span>${escapeHtml(status.message)}</span></div><button class="primary big" id="installToolchain" ${needsInstall && status.volumes.some(volume => volume.eligible) ? '' : 'disabled'}>${needsInstall ? status.ready ? 'Установить обновления' : 'Установить JDK и Gradle' : 'Всё обновлено'}</button></div>
+  </div>`);
+  document.getElementById('toolchainBack')!.onclick = goBack;
+  document.getElementById('checkToolUpdates')!.onclick = () => void renderMinecraftToolchains(projectRoot, minecraftVersion, loader, launcherInstanceId, true, returnView);
+  const installButton = document.getElementById('installToolchain') as HTMLButtonElement;
+  installButton.onclick = async () => {
+    const destination = document.querySelector<HTMLInputElement>('input[name="toolVolume"]:checked')?.value;
+    if (!destination) { toast('Выберите диск, на котором после установки останется 30 ГиБ.', 'warn'); return; }
+    installButton.disabled = true;
+    installButton.textContent = 'Скачиваю и проверяю SHA-256…';
+    try {
+      const installed = await installMinecraftToolchain(projectRoot, minecraftVersion, loader, destination);
+      toast(installed.message);
+      await renderMinecraftToolchains(projectRoot, minecraftVersion, loader, launcherInstanceId, false, returnView);
+    } catch (error) {
+      toast(String(error), 'warn');
+      installButton.disabled = false;
+      installButton.textContent = 'Повторить установку';
+    }
+  };
+}
+
 function renderMinecraft() {
-  showSurface(`<div class="surface-page minecraft-page"><div class="page-hero"><div><span class="overline">MINECRAFT + FUNO</span><h1>Новый мод без сложного Java-кода</h1><p>Создавайте моды, запускайте изолированные сборки и устанавливайте совместимые моды с Modrinth.</p></div><div class="hero-actions"><button class="primary" id="openLauncher">${icon('play')} Лаунчер и сборки</button><div class="voxel">F</div></div></div>
+  showSurface(`<div class="surface-page minecraft-page"><div class="page-hero"><div><span class="overline">MINECRAFT + FUNO</span><h1>Новый мод без сложного Java-кода</h1><p>Создавайте моды, запускайте изолированные сборки и устанавливайте совместимые моды с Modrinth.</p></div><div class="hero-actions"><button class="secondary" id="openToolchains">JDK и Gradle</button><button class="primary" id="openLauncher">${icon('play')} Лаунчер и сборки</button><div class="voxel">F</div></div></div>
     <div class="wizard-grid"><section class="wizard"><h2>Создать проект</h2><label class="field">Название мода<input id="modName" value="Мой первый мод"></label><label class="field">ID мода<input id="modId" value="my_first_mod" pattern="[a-z0-9_]+"></label><label class="field">Загрузчик<div class="loader-options"><button class="loader active" data-loader="fabric"><b>Fabric</b><span>Лёгкий и быстрый</span></button><button class="loader" data-loader="forge"><b>Forge</b><span>Большая экосистема</span></button><button class="loader" data-loader="neoforge"><b>NeoForge</b><span>Современный Forge</span></button></div></label><label class="field">Версия Minecraft<select id="minecraftVersion" disabled><option>Загрузка версий…</option></select><small id="minecraftVersionHint">Получаем официальный каталог загрузчика</small></label><button class="primary big" id="createMod" disabled>${icon('cube')} Создать Minecraft-мод</button></section>
     <section class="code-preview"><span>main.fun · <b id="minecraftCode">Minecraft</b> · Funo API</span><pre><i>use</i> minecraft.<b id="loaderCode">fabric</b>
 
@@ -399,6 +475,10 @@ function renderMinecraft() {
   const versionHint = document.getElementById('minecraftVersionHint')!;
   const createButton = document.getElementById('createMod') as HTMLButtonElement;
   document.getElementById('openLauncher')!.onclick = () => void renderLauncher();
+  document.getElementById('openToolchains')!.onclick = () => {
+    const selectedVersion = versions.find(version => version.id === versionSelect.value)?.id || minecraftRequirements().version;
+    void renderMinecraftToolchains(project.root, selectedVersion, loader);
+  };
 
   const updateVersionHint = () => {
     const selected = versions.find(version => version.id === versionSelect.value);
@@ -466,7 +546,7 @@ function renderMinecraft() {
 async function renderLauncher(selectedId?: string) {
   [instances, account] = await Promise.all([listInstances(), currentMicrosoftAccount().catch(() => null)]);
   const selected = instances.find(instance => instance.id === selectedId) || instances[0];
-  showSurface(`<div class="surface-page launcher-page"><div class="page-hero"><div><span class="overline">FUNO LAUNCHER</span><h1>Независимые сборки</h1><p>У каждой сборки отдельные <code>mods</code>, <code>config</code>, аргументы JVM и каталог игры.</p></div><div class="hero-actions"><button class="secondary" id="backToModWizard">← Мастер модов</button><button class="${account ? 'secondary' : 'primary'}" id="accountButton">${account ? `● ${escapeHtml(account.username)}` : 'Войти через Microsoft'}</button></div></div>
+  showSurface(`<div class="surface-page launcher-page"><div class="page-hero"><div><span class="overline">FUNO LAUNCHER</span><h1>Независимые сборки</h1><p>У каждой сборки отдельные <code>mods</code>, <code>config</code>, аргументы JVM и каталог игры.</p></div><div class="hero-actions"><button class="secondary" id="backToModWizard">← Мастер модов</button>${selected ? '<button class="secondary" id="launcherToolchains">JDK и Gradle</button>' : ''}<button class="${account ? 'secondary' : 'primary'}" id="accountButton">${account ? `● ${escapeHtml(account.username)}` : 'Войти через Microsoft'}</button></div></div>
     <div class="launcher-layout"><aside class="instance-sidebar"><h2>Сборки</h2>${instances.map(instance => `<button class="instance-card ${instance.id === selected?.id ? 'active' : ''}" data-instance="${escapeHtml(instance.id)}"><b>${escapeHtml(instance.name)}</b><span>${escapeHtml(instance.loader)} · ${escapeHtml(instance.minecraft_version)}</span><small>${instance.mods.length} модов</small></button>`).join('') || '<p class="side-help">Создайте первую сборку для текущего Minecraft-проекта.</p>'}<button class="secondary full" id="newInstance">+ Новая сборка</button></aside>
     <main class="instance-main">${selected ? `<div class="instance-heading"><div><h2>${escapeHtml(selected.name)}</h2><code>${escapeHtml(selected.game_dir)}</code></div><button class="primary big" id="launchMinecraft">${icon('play')} Запустить Minecraft</button></div>
       <div class="instance-tabs"><button class="active" data-instance-tab="config">Запуск</button><button data-instance-tab="mods">Моды (${selected.mods.length})</button></div>
@@ -474,6 +554,7 @@ async function renderLauncher(selectedId?: string) {
       <section id="instanceMods" class="instance-content hidden"><div class="package-toolbar"><div class="surface-search">${icon('search')}<input id="modrinthSearch" placeholder="Поиск модов на Modrinth"></div><button class="primary" id="findMods">Найти</button></div><p class="side-help">Результаты автоматически ограничены версией ${escapeHtml(selected.minecraft_version)} и загрузчиком ${escapeHtml(selected.loader)}. Повторная загрузка не создаёт копию.</p><div id="modrinthResults" class="modrinth-grid"></div><h3>Установлено</h3><div class="installed-mods">${selected.mods.map(mod => `<article><div><b>${escapeHtml(mod.name)}</b><small>${escapeHtml(mod.file_name)}</small></div><button class="secondary small remove-mod" data-project="${escapeHtml(mod.project_id)}">Удалить</button></article>`).join('') || '<p class="side-help">В этой сборке пока нет модов.</p>'}</div></section>` : `<div class="empty-registry"><div class="empty-icon">${icon('cube')}</div><h2>Создайте независимую сборку</h2><p>Она будет привязана к текущему Minecraft-проекту, но получит собственные моды и настройки.</p></div>`}</main></div></div>`);
   document.getElementById('backToModWizard')!.onclick = renderMinecraft;
   document.getElementById('accountButton')!.onclick = () => void handleMicrosoftAccount();
+  if (selected) document.getElementById('launcherToolchains')!.onclick = () => void renderMinecraftToolchains(selected.project_root, selected.minecraft_version, selected.loader, selected.id);
   document.getElementById('newInstance')!.onclick = () => {
     const kindLoader = project.kind.replace('minecraft-', '') || 'fabric';
     const manifest = project.files.find(file => file.path === 'funo.toml')?.content || '';
@@ -506,6 +587,14 @@ async function renderLauncher(selectedId?: string) {
     catch (error) { toast(String(error), 'warn'); }
   };
   document.getElementById('launchMinecraft')!.onclick = async () => {
+    try {
+      const tools = await minecraftToolchainStatus(selected.project_root, selected.minecraft_version, selected.loader);
+      if (!tools.ready) {
+        toast('Перед запуском настройте JDK и Gradle. Studio уже подобрала совместимые версии.', 'warn');
+        await renderMinecraftToolchains(selected.project_root, selected.minecraft_version, selected.loader, selected.id);
+        return;
+      }
+    } catch (error) { toast(`Не удалось проверить JDK и Gradle: ${String(error)}`, 'warn'); return; }
     selectPanel('terminal'); document.getElementById('panelBody')!.innerHTML = '<span class="muted">Запускаю изолированный Minecraft runClient…</span>';
     try { const output = await launchInstance(selected.id); document.getElementById('panelBody')!.innerHTML = `<span class="success">Minecraft завершил работу</span>\n${escapeHtml(output)}`; }
     catch (error) { document.getElementById('panelBody')!.innerHTML = `<span class="error">Запуск Minecraft остановлен</span>\n${escapeHtml(String(error))}`; }
@@ -592,13 +681,17 @@ function renderLessons() {
 }
 
 async function renderSettings() {
-  showSurface(`<div class="surface-page settings-page"><div class="page-hero"><div><span class="overline">НАСТРОЙКИ</span><h1>Funo Studio</h1><p>Редактор хранит исходники локально. Код не отправляется в облако.</p></div></div><div class="settings-list"><section><h2>Редактор и обучение</h2><label><span><b>Режим по умолчанию</b><small>В режиме новичка подсказки подробнее</small></span><select id="defaultMode"><option value="novice">Я новичок</option><option value="pro">Профессиональный</option></select></label><label><span><b>Интерактивное обучение</b><small>Продолжить с сохранённого шага</small></span><button class="secondary" id="openLearning">Открыть путь</button></label></section><section><h2>Компилятор</h2><label><span><b>Backend по умолчанию</b><small>JVM, C++ 17, Rust, JavaScript или Python</small></span><select id="defaultBackend"><option value="jvm">JVM / Java</option><option value="cpp">C++ 17</option><option value="rust">Rust</option><option value="javascript">JavaScript</option><option value="python">Python</option></select></label><div class="cli-card"><div>${icon('terminal')}</div><span><b>Funo CLI и PATH</b><small id="pathDescription">Проверяю пользовательский PATH…</small><code id="pathLauncher"></code></span><button class="primary" id="togglePath" disabled>Проверка…</button></div></section><section><h2>Minecraft и Microsoft</h2><label><span><b>Microsoft Entra Client ID</b><small>Public client с разрешённым device-code flow. Секрет не нужен и не хранится.</small></span><input id="microsoftClientId" value="${escapeHtml(settings.microsoft_client_id)}" placeholder="00000000-0000-0000-0000-000000000000"></label><label><span><b>Аккаунт</b><small>${account ? `Подключён: ${escapeHtml(account.username)}` : 'Не подключён'}</small></span><button class="secondary" id="settingsAccount">${account ? 'Управление' : 'Войти'}</button></label></section><section><h2>Пакеты</h2><label><span><b>Официальный GitHub</b><small>Индекс проверенных библиотек</small></span><input value="vanyachickenganidanya-lgtm/funo_libsOFFICAL" readonly></label><div class="cli-card compact"><div>${icon('package')}</div><span><b>Свои плагины</b><small>Rust, C++ 17, TypeScript, JavaScript и Python</small></span><button class="secondary" id="settingsPlugins">Открыть SDK</button></div></section></div></div>`);
+  showSurface(`<div class="surface-page settings-page"><div class="page-hero"><div><span class="overline">НАСТРОЙКИ</span><h1>Funo Studio</h1><p>Редактор хранит исходники локально. Код не отправляется в облако.</p></div></div><div class="settings-list"><section><h2>Редактор и обучение</h2><label><span><b>Режим по умолчанию</b><small>В режиме новичка подсказки подробнее</small></span><select id="defaultMode"><option value="novice">Я новичок</option><option value="pro">Профессиональный</option></select></label><label><span><b>Интерактивное обучение</b><small>Продолжить с сохранённого шага</small></span><button class="secondary" id="openLearning">Открыть путь</button></label></section><section><h2>Компилятор</h2><label><span><b>Backend по умолчанию</b><small>JVM, C++ 17, Rust, JavaScript или Python</small></span><select id="defaultBackend"><option value="jvm">JVM / Java</option><option value="cpp">C++ 17</option><option value="rust">Rust</option><option value="javascript">JavaScript</option><option value="python">Python</option></select></label><div class="cli-card"><div>${icon('terminal')}</div><span><b>Funo CLI и PATH</b><small id="pathDescription">Проверяю пользовательский PATH…</small><code id="pathLauncher"></code></span><button class="primary" id="togglePath" disabled>Проверка…</button></div></section><section><h2>Minecraft и Microsoft</h2><label><span><b>Microsoft Entra Client ID</b><small>Public client с разрешённым device-code flow. Секрет не нужен и не хранится.</small></span><input id="microsoftClientId" value="${escapeHtml(settings.microsoft_client_id)}" placeholder="00000000-0000-0000-0000-000000000000"></label><label><span><b>Аккаунт</b><small>${account ? `Подключён: ${escapeHtml(account.username)}` : 'Не подключён'}</small></span><button class="secondary" id="settingsAccount">${account ? 'Управление' : 'Войти'}</button></label><div class="cli-card compact"><div>${icon('java')}</div><span><b>JDK и Gradle для Minecraft</b><small>Проверка версий, обновления и установка с обязательным резервом 30 ГиБ</small></span><button class="secondary" id="settingsToolchains">Открыть</button></div></section><section><h2>Пакеты</h2><label><span><b>Официальный GitHub</b><small>Индекс проверенных библиотек</small></span><input value="vanyachickenganidanya-lgtm/funo_libsOFFICAL" readonly></label><div class="cli-card compact"><div>${icon('package')}</div><span><b>Свои плагины</b><small>Rust, C++ 17, TypeScript, JavaScript и Python</small></span><button class="secondary" id="settingsPlugins">Открыть SDK</button></div></section></div></div>`);
   const modeSelect = document.getElementById('defaultMode') as HTMLSelectElement; modeSelect.value = settings.beginner ? 'novice' : 'pro';
   const backendSelect = document.getElementById('defaultBackend') as HTMLSelectElement; backendSelect.value = compilerBackend;
   modeSelect.onchange = () => setMode(modeSelect.value as 'novice' | 'pro');
   backendSelect.onchange = () => { compilerBackend = backendSelect.value; settings.compiler_backend = compilerBackend; document.getElementById('backendStatus')!.textContent = compilerBackend.toUpperCase(); void saveSettings(settings); };
   (document.getElementById('microsoftClientId') as HTMLInputElement).onchange = event => { settings.microsoft_client_id = (event.target as HTMLInputElement).value.trim(); void saveSettings(settings); };
   document.getElementById('settingsAccount')!.onclick = () => void handleMicrosoftAccount();
+  document.getElementById('settingsToolchains')!.onclick = () => {
+    const requirements = minecraftRequirements();
+    void renderMinecraftToolchains(project.root, requirements.version, requirements.loader, undefined, false, 'settings');
+  };
   document.getElementById('settingsPlugins')!.onclick = () => void renderPlugins();
   document.getElementById('openLearning')!.onclick = () => { selectView('lessons'); renderLessons(); };
   try {
@@ -712,6 +805,16 @@ async function execute() {
     const minecraft = project.kind.startsWith('minecraft');
     const native = !minecraft && compilerBackend !== 'jvm';
     const shouldRun = (document.getElementById('backendMode') as HTMLSelectElement | null)?.value !== 'build';
+    if (minecraft) {
+      const requirements = minecraftRequirements();
+      const tools = await minecraftToolchainStatus(project.root, requirements.version, requirements.loader);
+      if (!tools.ready) {
+        panel.innerHTML = `<span class="error">Нужны JDK ${tools.required_java} и совместимый Gradle.</span>\n${escapeHtml(tools.message)}\n<span class="muted">Открыт безопасный установщик с резервом 30 ГиБ.</span>`;
+        toast('Сначала установите инструменты Minecraft.', 'warn');
+        await renderMinecraftToolchains(project.root, requirements.version, requirements.loader);
+        return;
+      }
+    }
     const result = native ? await runBackend(project.root, editor.getValue(), compilerBackend, shouldRun) : minecraft ? await buildMinecraft(project.root, editor.getValue()) : await runCode(project.root, editor.getValue());
     if (result.success) panel.innerHTML = `${escapeHtml(result.stdout)}${result.stdout ? '\n' : ''}<span class="success">✓ ${minecraft ? 'Minecraft-мод собран' : native ? `${compilerBackend.toUpperCase()} готов` : `Завершено успешно${/return\s*\(\s*200/.test(editor.getValue()) ? ' · Funo 200' : ''}`}</span>\n<span class="muted">${minecraft ? 'Gradle' : compilerBackend.toUpperCase()} · ${result.elapsed_ms} мс${result.artifact ? ` · ${escapeHtml(result.artifact)}` : ''}</span>`;
     else panel.innerHTML = `<span class="error">Сборка остановлена</span>\n${escapeHtml(result.stderr)}\n<span class="muted">Помощник покажет, как исправить код.</span>`;

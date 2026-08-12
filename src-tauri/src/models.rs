@@ -202,3 +202,42 @@ pub struct PluginCheck {
     pub summary: String,
     pub output: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MinecraftToolStatus {
+    pub found: bool,
+    pub compatible: bool,
+    pub managed: bool,
+    pub version: String,
+    pub latest_version: String,
+    pub path: String,
+    pub detail: String,
+    pub update_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageVolume {
+    pub id: String,
+    pub root: String,
+    pub install_root: String,
+    pub free_bytes: u64,
+    pub total_bytes: u64,
+    pub available_after_bytes: u64,
+    pub eligible: bool,
+    pub current: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MinecraftToolchainStatus {
+    pub required_java: u8,
+    pub recommended_gradle: String,
+    pub reserve_bytes: u64,
+    pub estimated_install_bytes: u64,
+    pub jdk: MinecraftToolStatus,
+    pub gradle: MinecraftToolStatus,
+    pub volumes: Vec<StorageVolume>,
+    pub recommended_install_root: String,
+    pub ready: bool,
+    pub has_updates: bool,
+    pub message: String,
+}
