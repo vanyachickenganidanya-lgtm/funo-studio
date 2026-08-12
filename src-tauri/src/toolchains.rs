@@ -607,7 +607,7 @@ pub fn local_status(
 
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
-        .user_agent("Funo-Studio/1.0.0")
+        .user_agent(concat!("Funo-Studio/", env!("CARGO_PKG_VERSION")))
         .redirect(reqwest::redirect::Policy::limited(8))
         .timeout(Duration::from_secs(1800))
         .build()
