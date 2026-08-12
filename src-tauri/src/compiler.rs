@@ -260,14 +260,45 @@ fn infer_expression_type(value: &str) -> String {
 }
 
 fn replace_word_operators(value: &str) -> String {
-    let mut result = value.to_string();
-    for (pattern, replacement) in [
-        (r"\band\b", "&&"),
-        (r"\bor\b", "||"),
-        (r"\bnot\b", "!"),
-    ] {
-        result = Regex::new(pattern).unwrap().replace_all(&result, replacement).into_owned();
+    // Replace language operators without ever changing text inside literals.
+    let mut result = String::with_capacity(value.len());
+    let mut word = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let flush_word = |result: &mut String, word: &mut String| {
+        match word.as_str() {
+            "and" => result.push_str("&&"),
+            "or" => result.push_str("||"),
+            "not" => result.push('!'),
+            _ => result.push_str(word),
+        }
+        word.clear();
+    };
+
+    for ch in value.chars() {
+        if let Some(active_quote) = quote {
+            result.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            flush_word(&mut result, &mut word);
+            quote = Some(ch);
+            result.push(ch);
+        } else if ch.is_alphanumeric() || ch == '_' {
+            word.push(ch);
+        } else {
+            flush_word(&mut result, &mut word);
+            result.push(ch);
+        }
     }
+    flush_word(&mut result, &mut word);
     result
 }
 
@@ -322,13 +353,15 @@ fn expression_to_java_typed(value: &str, expected_type: Option<&str>) -> String 
         expr = array;
     }
     expr = replace_word_operators(&expr);
-    for (pattern, replacement) in [
-        (r"\bprintln\s*\(", "System.out.println("),
-        (r"\bprint\s*\(", "System.out.print("),
-    ] {
-        expr = Regex::new(pattern).unwrap().replace_all(&expr, replacement).into_owned();
+    let trimmed = expr.trim_start();
+    let leading = &expr[..expr.len() - trimmed.len()];
+    if let Some(rest) = trimmed.strip_prefix("println(") {
+        format!("{leading}System.out.println({rest}")
+    } else if let Some(rest) = trimmed.strip_prefix("print(") {
+        format!("{leading}System.out.print({rest}")
+    } else {
+        expr
     }
-    expr
 }
 
 fn expression_to_java(value: &str) -> String {
@@ -1148,6 +1181,15 @@ mod tests {
         assert!(java.contains("java.util.ArrayList<String> names"));
         assert!(java.contains("for (int i = 0; i < 2; i++)"));
         assert!(java.contains("score = score + rewards[i];"));
+    }
+
+    #[test]
+    fn operators_do_not_modify_string_literals() {
+        let java = expression_to_java(r#"println("and or not: " + (true and not false))"#);
+        assert_eq!(
+            java,
+            r#"System.out.println("and or not: " + (true && ! false))"#
+        );
     }
 
     #[test]
