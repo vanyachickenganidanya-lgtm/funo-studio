@@ -24,6 +24,12 @@ export type BuildResult = {
 
 export type ProjectFile = { path: string; content: string };
 export type Project = { root: string; name: string; kind: string; files: ProjectFile[] };
+export type MinecraftVersion = {
+  id: string;
+  label: string;
+  stable: boolean;
+  java: number;
+};
 
 export type RegistryPackage = {
   id: string;
@@ -147,10 +153,39 @@ export async function installPackage(root: string, pkg: RegistryPackage, allowUn
   return `Предпросмотр: ${pkg.name} будет установлен в desktop-приложении.`;
 }
 
-export async function createMinecraftProject(name: string, modId: string, loader: string): Promise<Project> {
-  if (isTauri()) return invoke<Project>('create_minecraft_project', { name, modId, loader });
+const browserMinecraftVersions: Record<string, string[]> = {
+  fabric: ['26.2', '26.1.2', '1.21.11', '1.21.1', '1.20.6', '1.20.1', '1.19.4', '1.18.2', '1.17.1', '1.16.5', '1.15.2', '1.14.4'],
+  forge: ['26.2', '26.1.2', '1.21.11', '1.21.1', '1.20.6', '1.20.1', '1.19.4', '1.18.2', '1.17.1', '1.16.5', '1.15.2', '1.14.4'],
+  neoforge: ['26.2', '26.1.2', '1.21.11', '1.21.10', '1.21.8', '1.21.6', '1.21.5', '1.21.4', '1.21.3', '1.21.1', '1.21', '1.20.6', '1.20.4', '1.20.3', '1.20.2']
+};
+
+function minecraftJava(version: string): number {
+  const parts = version.split('.').map(Number);
+  if (parts[0] >= 26) return 25;
+  if (parts[1] > 20 || (parts[1] === 20 && (parts[2] || 0) >= 5)) return 21;
+  if (parts[1] >= 18) return 17;
+  if (parts[1] === 17) return 16;
+  return 8;
+}
+
+export async function fetchMinecraftVersions(loader: string): Promise<MinecraftVersion[]> {
+  if (isTauri()) return invoke<MinecraftVersion[]>('minecraft_versions', { loader });
+  return (browserMinecraftVersions[loader] || []).map(id => ({ id, label: id, stable: true, java: minecraftJava(id) }));
+}
+
+export async function createMinecraftProject(
+  name: string,
+  modId: string,
+  loader: string,
+  minecraftVersion: string
+): Promise<Project> {
+  if (isTauri()) return invoke<Project>('create_minecraft_project', { name, modId, loader, minecraftVersion });
+  const safeName = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   return {
     root: 'browser-preview', name, kind: `minecraft-${loader}`,
-    files: [{ path: 'main.fun', content: `use minecraft.${loader}\n\nmod "${modId}" {\n    on start {\n        log("Мод ${name} загружен")\n    }\n\n    on server_start {\n        broadcast("Сервер готов!")\n    }\n\n    on player_join(player) {\n        tell("Добро пожаловать!")\n    }\n}` }]
+    files: [
+      { path: 'main.fun', content: `use minecraft.${loader}\n\nmod "${modId}" {\n    on start {\n        log("Мод ${safeName} загружен")\n    }\n\n    on server_start {\n        broadcast("Сервер Minecraft ${minecraftVersion} готов!")\n    }\n\n    on player_join(player) {\n        tell("Добро пожаловать!")\n    }\n}` },
+      { path: 'funo.toml', content: `[project]\nname = "${safeName}"\nkind = "minecraft-${loader}"\ntarget = "jvm-${minecraftJava(minecraftVersion)}"\n\n[minecraft]\nmod_id = "${modId}"\nloader = "${loader}"\nversion = "${minecraftVersion}"\n` }
+    ]
   };
 }

@@ -7,6 +7,14 @@ pub struct ProjectFile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MinecraftVersion {
+    pub id: String,
+    pub label: String,
+    pub stable: bool,
+    pub java: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub root: String,
     pub name: String,

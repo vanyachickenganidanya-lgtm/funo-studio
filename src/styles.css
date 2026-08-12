@@ -126,6 +126,7 @@ kbd { margin-left: auto; border: 1px solid #4a4a4a; background: #333; border-rad
 .primary, .secondary { min-height: 30px; padding: 5px 12px; border-radius: 2px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
 .primary { background: var(--blue2); color: white; }
 .primary:hover { background: #1177bb; }
+.primary:disabled, .secondary:disabled, select:disabled { opacity: .55; cursor: wait; }
 .secondary { background: #313131; color: #ddd; border: 1px solid #444; }
 .secondary:hover { background: #3b3b3b; }
 .small { min-height: 26px; padding: 3px 9px; font-size: 11px; }
@@ -201,8 +202,9 @@ input, select { height: 30px; border: 1px solid #3c3c3c; background: #252526; pa
 .wizard { display: grid; align-content: start; gap: 14px; }
 .wizard h2 { margin: 0 0 4px; color: #eee; font-size: 17px; font-weight: 500; }
 .field { display: grid; gap: 6px; color: #bbb; font-size: 11px; }
-.field input { width: 100%; }
-.loader-options { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.field input, .field select { width: 100%; }
+.field small { min-height: 15px; color: #858585; line-height: 1.4; }
+.loader-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .loader { display: grid; gap: 3px; min-height: 53px; padding: 8px 10px; background: #252526; border: 1px solid #3c3c3c; color: #aaa; text-align: left; cursor: pointer; }
 .loader:hover { border-color: #666; }
 .loader.active { border-color: var(--focus); box-shadow: inset 2px 0 var(--focus); }

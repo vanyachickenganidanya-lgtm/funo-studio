@@ -4,7 +4,8 @@ import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import { registerFunoLanguage, setDiagnostics } from './funo-language';
 import {
   ensureProject, saveFile, checkCode, runCode, buildMinecraft, fetchRegistry, installPackage,
-  createMinecraftProject, type Project, type Diagnostic, type RegistryPackage
+  fetchMinecraftVersions, createMinecraftProject, type Project, type Diagnostic, type RegistryPackage,
+  type MinecraftVersion
 } from './api';
 
 (self as any).MonacoEnvironment = { getWorker: () => new EditorWorker() };
@@ -235,22 +236,89 @@ function packageCard(p: RegistryPackage) {
 }
 
 function renderMinecraft() {
-  showSurface(`<div class="surface-page minecraft-page"><div class="page-hero"><div><span class="overline">MINECRAFT + FUNO</span><h1>Новый мод без сложного Java-кода</h1><p>Funo создаст Gradle-проект, описание мода и простую точку запуска.</p></div><div class="voxel">F</div></div>
-    <div class="wizard-grid"><section class="wizard"><h2>Создать проект</h2><label class="field">Название мода<input id="modName" value="Мой первый мод"></label><label class="field">ID мода<input id="modId" value="my_first_mod" pattern="[a-z0-9_]+"></label><label class="field">Загрузчик<div class="loader-options"><button class="loader active" data-loader="fabric"><b>Fabric</b><span>Проще начать</span></button><button class="loader" data-loader="forge"><b>Forge</b><span>Java-экосистема</span></button></div></label><button class="primary big" id="createMod">${icon('cube')} Создать Minecraft-мод</button></section>
-    <section class="code-preview"><span>main.fun · Funo Minecraft API</span><pre><i>use</i> minecraft.<b id="loaderCode">fabric</b>\n\n<i>mod</i> <s>"my_first_mod"</s> {\n    <i>on</i> server_start {\n        <em>broadcast</em>(<s>"Сервер готов!"</s>)\n        <em>run_command</em>(<s>"time set day"</s>)\n    }\n    <i>on</i> player_join(player) {\n        <em>tell</em>(<s>"Добро пожаловать!"</s>)\n    }\n}</pre><div class="what-created"><b>Funo создаст:</b><span>✓ Gradle + manifest</span><span>✓ события Fabric / Forge</span><span>✓ Minecraft API-команды</span><span>✓ готовый JAR мода</span></div></section></div>
+  showSurface(`<div class="surface-page minecraft-page"><div class="page-hero"><div><span class="overline">MINECRAFT + FUNO</span><h1>Новый мод без сложного Java-кода</h1><p>Выберите версию Minecraft и загрузчик — Funo подберёт совместимые зависимости и Java.</p></div><div class="voxel">F</div></div>
+    <div class="wizard-grid"><section class="wizard"><h2>Создать проект</h2><label class="field">Название мода<input id="modName" value="Мой первый мод"></label><label class="field">ID мода<input id="modId" value="my_first_mod" pattern="[a-z0-9_]+"></label><label class="field">Загрузчик<div class="loader-options"><button class="loader active" data-loader="fabric"><b>Fabric</b><span>Лёгкий и быстрый</span></button><button class="loader" data-loader="forge"><b>Forge</b><span>Большая экосистема</span></button><button class="loader" data-loader="neoforge"><b>NeoForge</b><span>Современный Forge</span></button></div></label><label class="field">Версия Minecraft<select id="minecraftVersion" disabled><option>Загрузка версий…</option></select><small id="minecraftVersionHint">Получаем официальный каталог загрузчика</small></label><button class="primary big" id="createMod" disabled>${icon('cube')} Создать Minecraft-мод</button></section>
+    <section class="code-preview"><span>main.fun · <b id="minecraftCode">Minecraft</b> · Funo API</span><pre><i>use</i> minecraft.<b id="loaderCode">fabric</b>
+
+<i>mod</i> <s>"my_first_mod"</s> {
+    <i>on</i> server_start {
+        <em>broadcast</em>(<s>"Сервер готов!"</s>)
+        <em>run_command</em>(<s>"time set day"</s>)
+    }
+    <i>on</i> player_join(player) {
+        <em>tell</em>(<s>"Добро пожаловать!"</s>)
+    }
+}</pre><div class="what-created"><b>Funo создаст:</b><span>✓ Gradle + manifest выбранной версии</span><span>✓ события Fabric / Forge / NeoForge</span><span>✓ правильную версию Java</span><span>✓ готовый JAR мода</span></div></section></div>
     <div class="learn-strip"><div>${icon('spark')}</div><p><b>Свои команды Funo без сложного Java-кода.</b><br>Доступны <code>log</code>, <code>broadcast</code>, <code>tell</code>, <code>give</code>, <code>actionbar</code> и <code>run_command</code>.</p></div>
   </div>`);
   let loader = 'fabric';
-  document.querySelectorAll<HTMLElement>('.loader').forEach(x => x.onclick = () => { loader = x.dataset.loader!; document.querySelectorAll('.loader').forEach(y => y.classList.remove('active')); x.classList.add('active'); document.getElementById('loaderCode')!.textContent = loader; });
+  let versions: MinecraftVersion[] = [];
+  let versionRequest = 0;
+  const versionSelect = document.getElementById('minecraftVersion') as HTMLSelectElement;
+  const versionHint = document.getElementById('minecraftVersionHint')!;
+  const createButton = document.getElementById('createMod') as HTMLButtonElement;
+
+  const updateVersionHint = () => {
+    const selected = versions.find(version => version.id === versionSelect.value);
+    versionHint.textContent = selected ? `${loader} · Minecraft ${selected.label} · требуется Java ${selected.java}` : 'Выберите совместимую версию';
+    document.getElementById('minecraftCode')!.textContent = selected ? `Minecraft ${selected.label}` : 'Minecraft';
+  };
+
+  const loadVersions = async () => {
+    const request = ++versionRequest;
+    versionSelect.disabled = true;
+    createButton.disabled = true;
+    versionSelect.innerHTML = '<option>Загрузка версий…</option>';
+    versionHint.textContent = `Получаем официальный каталог ${loader}…`;
+    try {
+      const result = await fetchMinecraftVersions(loader);
+      if (request !== versionRequest) return;
+      versions = result;
+      if (!versions.length) throw new Error(`Для ${loader} пока нет доступных версий`);
+      versionSelect.innerHTML = versions.map(version => `<option value="${escapeHtml(version.id)}">${escapeHtml(version.label)} · Java ${version.java}${version.stable ? '' : ' · preview'}</option>`).join('');
+      versionSelect.disabled = false;
+      createButton.disabled = false;
+      updateVersionHint();
+    } catch (error) {
+      if (request !== versionRequest) return;
+      versions = [];
+      versionSelect.innerHTML = '<option>Версии недоступны</option>';
+      versionHint.textContent = String(error);
+      toast(String(error), 'warn');
+    }
+  };
+
+  document.querySelectorAll<HTMLElement>('.loader').forEach(element => element.onclick = () => {
+    loader = element.dataset.loader!;
+    document.querySelectorAll('.loader').forEach(option => option.classList.remove('active'));
+    element.classList.add('active');
+    document.getElementById('loaderCode')!.textContent = loader;
+    void loadVersions();
+  });
+  versionSelect.onchange = updateVersionHint;
   const idInput = document.getElementById('modId') as HTMLInputElement;
   idInput.oninput = () => { document.querySelector('.code-preview s')!.textContent = `"${idInput.value}"`; };
-  document.getElementById('createMod')!.onclick = async () => {
+  createButton.onclick = async () => {
     const name = (document.getElementById('modName') as HTMLInputElement).value.trim();
     const modId = idInput.value.trim();
+    const minecraftVersion = versionSelect.value;
+    if (!name) { toast('Укажите название мода.', 'warn'); return; }
     if (!/^[a-z][a-z0-9_]{2,63}$/.test(modId)) { toast('ID: маленькие латинские буквы, цифры и _.', 'warn'); return; }
-    try { project = await createMinecraftProject(name, modId, loader); models.forEach(m => m.dispose()); models.clear(); currentPath = project.files[0].path; updateProjectUI(); openFile(currentPath); toast('Minecraft-проект создан. Можно писать код!'); }
-    catch (err) { toast(String(err), 'warn'); }
+    if (!versions.some(version => version.id === minecraftVersion)) { toast('Выберите версию Minecraft.', 'warn'); return; }
+    createButton.disabled = true;
+    createButton.innerHTML = `${icon('refresh')} Подбираем зависимости…`;
+    try {
+      project = await createMinecraftProject(name, modId, loader, minecraftVersion);
+      models.forEach(model => model.dispose()); models.clear();
+      currentPath = project.files[0].path; updateProjectUI(); openFile(currentPath);
+      toast(`${loader} · Minecraft ${minecraftVersion}: проект создан!`);
+    } catch (err) {
+      toast(String(err), 'warn');
+      createButton.disabled = false;
+      createButton.innerHTML = `${icon('cube')} Создать Minecraft-мод`;
+    }
   };
+  void loadVersions();
 }
 
 const wiki = [
@@ -259,7 +327,7 @@ const wiki = [
   ['Основы', 'Функции и циклы', `<h1>Функции и циклы</h1><pre>fun double(n: int) -> int = n * 2\n\nfun main() {\n    for i in 0..10 {\n        println(double(i))\n    }\n\n    int left = 3\n    while left &gt; 0 {\n        println(left)\n        left = left - 1\n    }\n}</pre><p>Также доступны <code>repeat</code>, <code>break</code>, <code>continue</code>, <code>and</code>, <code>or</code> и <code>not</code>.</p>`],
   ['CLI', 'Компилятор в терминале', `<h1>Funo в терминале</h1><p>CLI собирается вместе с проектом и сам устанавливается в пользовательский PATH.</p><pre>funo setup\nfuno check main.fun\nfuno run main.fun\nfuno build main.fun -o app.jar</pre><div class="doc-note">Для сборки нужен JDK 17 или 21. После <code>funo setup</code> откройте новый терминал.</div>`],
   ['Java', 'Java-библиотеки', `<h1>Java-библиотеки</h1><p>Установленные Java-пакеты автоматически попадают в classpath.</p><pre>use java "com.google.gson.Gson"\n\nfun main() {\n    var gson = new Gson()\n    println(gson.toJson("Привет"))\n}</pre>`],
-  ['Minecraft', 'События и команды', `<h1>Minecraft API Funo</h1><p>Мастер создаёт настоящий Fabric/Forge Gradle-проект, мост событий и Funo API.</p><pre>use minecraft.fabric\n\nmod "hello_mod" {\n    on start {\n        log("Мод загружен")\n    }\n    on server_start {\n        broadcast("Сервер готов!")\n        run_command("time set day")\n    }\n    on player_join(player) {\n        tell("Добро пожаловать!")\n        give("minecraft:diamond", 1)\n    }\n}</pre>`],
+  ['Minecraft', 'События и команды', `<h1>Minecraft API Funo</h1><p>Мастер создаёт настоящий Fabric/Forge/NeoForge Gradle-проект, мост событий и Funo API.</p><pre>use minecraft.fabric\n\nmod "hello_mod" {\n    on start {\n        log("Мод загружен")\n    }\n    on server_start {\n        broadcast("Сервер готов!")\n        run_command("time set day")\n    }\n    on player_join(player) {\n        tell("Добро пожаловать!")\n        give("minecraft:diamond", 1)\n    }\n}</pre>`],
   ['Пакеты', 'Официальный реестр', `<h1>Официальный реестр</h1><p>Пакеты загружаются только по HTTPS, сверяются по SHA-256 и записываются в <code>funo.lock</code>.</p><pre>funo pkg list\nfuno pkg search minecraft\nfuno pkg install funo.hello</pre><p>Источник: <code>github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL</code>. Для реестра нужен <code>index.json</code>; готовый пример находится в <code>registry-template</code>.</p>`]
 ];
 
@@ -291,7 +359,7 @@ function selectView(view: string) {
   else if (view === 'search') { title.textContent = 'ПОИСК'; renderSearch(); hideSurface(); }
   else if (view === 'run') { title.textContent = 'ЗАПУСК И ОТЛАДКА'; renderRunSide(); hideSurface(); }
   else if (view === 'packages') { title.textContent = 'БИБЛИОТЕКИ'; document.getElementById('sidebarContent')!.innerHTML = `<div class="side-info">${icon('package')}<b>Funo Pack</b><p>Официальный реестр подключён к вашему GitHub.</p></div>`; void renderPackages(); }
-  else if (view === 'minecraft') { title.textContent = 'MINECRAFT'; document.getElementById('sidebarContent')!.innerHTML = `<div class="side-info">${icon('cube')}<b>Создание модов</b><p>Fabric и Forge с простым кодом Funo.</p></div>`; renderMinecraft(); }
+  else if (view === 'minecraft') { title.textContent = 'MINECRAFT'; document.getElementById('sidebarContent')!.innerHTML = `<div class="side-info">${icon('cube')}<b>Создание модов</b><p>Fabric, Forge и NeoForge с простым кодом Funo.</p></div>`; renderMinecraft(); }
   else if (view === 'wiki') { title.textContent = 'ВИКИ FUNO'; document.getElementById('sidebarContent')!.innerHTML = `<div class="side-info">${icon('book')}<b>Документация</b><p>От первой функции до своего пакета.</p></div>`; renderWiki(); }
   else if (view === 'settings') { title.textContent = 'УПРАВЛЕНИЕ'; document.getElementById('sidebarContent')!.innerHTML = ''; renderSettings(); }
 }

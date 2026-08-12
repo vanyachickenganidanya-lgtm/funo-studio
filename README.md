@@ -1,6 +1,6 @@
 # Funo 0.3 — Studio, CLI и Minecraft SDK
 
-**Funo** — простой язык программирования, который компилируется в Java/JVM. В репозитории находятся красивый desktop-редактор на Tauri 2, настоящий консольный компилятор `funo`, менеджер библиотек и генератор Minecraft-модов для Fabric/Forge.
+**Funo** — простой язык программирования, который компилируется в Java/JVM. В репозитории находятся красивый desktop-редактор на Tauri 2, настоящий консольный компилятор `funo`, менеджер библиотек и генератор Minecraft-модов для Fabric, Forge и NeoForge.
 
 Официальный реестр библиотек:
 
@@ -148,12 +148,31 @@ funo pkg remove funo.hello
 Создание проекта из Studio — значок куба слева. Из терминала:
 
 ```bash
-funo minecraft new "Hello Funo" hello_funo fabric
+# Каталог меняется вместе с официальными релизами загрузчика
+funo minecraft versions fabric
+funo minecraft versions forge
+funo minecraft versions neoforge
+
+# loader и Minecraft version задаются явно
+funo minecraft new "Hello Funo" hello_funo fabric 1.21.1
+funo minecraft new "Hello Neo" hello_neo neoforge 26.2
 cd ~/Documents/FunoProjects/hello_funo
 funo minecraft build
 ```
 
-Поддерживаются `fabric` и `forge`, Minecraft 1.21.1 и Java 21. Генератор создаёт Gradle-проект, manifest загрузчика, Java-мост событий и runtime `FunoMinecraft`.
+Поддерживаются `fabric`, `forge` и `neoforge`. Studio и CLI загружают версии из официальных Fabric Meta, Forge Maven и NeoForge Maven, поэтому список не зашит в приложение и получает новые релизы без обновления Funo. Доступны все опубликованные стабильные и preview-версии, для которых современный генератор может создать проект: Fabric от 1.14, Forge от 1.14.4 и NeoForge от 1.20.2, включая календарные версии 26.x.
+
+Генератор разрешает точную совместимую версию Loader, Fabric API и mappings, создаёт Gradle-конфигурацию нужной эпохи, manifest загрузчика, отражательный Java-мост событий и runtime `FunoMinecraft`. Версия Java подбирается автоматически:
+
+| Minecraft | Java |
+| --- | ---: |
+| до 1.16.x | 8 |
+| 1.17.x | 16 |
+| 1.18–1.20.4 | 17 |
+| 1.20.5–1.21.x | 21 |
+| календарные 26.x | 25 |
+
+Если версия в команде `new` не указана, CLI выбирает самый новый доступный стабильный релиз выбранного загрузчика.
 
 ```funo
 use minecraft.fabric
@@ -240,7 +259,7 @@ src/                         TypeScript UI и язык Monaco
 src-tauri/src/compiler.rs    Funo → Java, javac/java/jar, Minecraft compiler
 src-tauri/src/cli.rs         команда funo
 src-tauri/src/registry.rs    официальный менеджер пакетов
-src-tauri/src/project.rs     проекты и Fabric/Forge generator
+src-tauri/src/project.rs     каталоги версий и Fabric/Forge/NeoForge generator
 scripts/                     установка CLI в PATH
 registry-template/           шаблон официального реестра
 examples/                    примеры Funo
@@ -250,5 +269,5 @@ examples/                    примеры Funo
 
 - Funo уже подходит для консольных учебных и небольших JVM-программ, но это ещё не полный аналог Java/Kotlin.
 - Диагностика самого Funo дружелюбная; ошибки типов стороннего Java API пока выводит `javac`.
-- Minecraft runtime использует стабильные точки Fabric/Forge и серверные команды; регистрация собственных блоков, предметов и GUI будет добавляться отдельными адаптерами Funo Pack.
+- Minecraft runtime подключает события Fabric/Forge/NeoForge и серверные команды через совместимый между версиями отражательный мост; регистрация собственных блоков, предметов и GUI будет добавляться отдельными адаптерами Funo Pack.
 - SHA-256 защищает от незаметной подмены файла, но будущей схеме официального реестра также нужны цифровые подписи.

@@ -69,8 +69,18 @@ async fn install_package(
 }
 
 #[tauri::command]
-fn create_minecraft_project(name: String, mod_id: String, loader: String) -> Result<Project, String> {
-    project::create_minecraft_project(&name, &mod_id, &loader)
+async fn minecraft_versions(loader: String) -> Result<Vec<models::MinecraftVersion>, String> {
+    project::minecraft_versions(&loader).await
+}
+
+#[tauri::command]
+async fn create_minecraft_project(
+    name: String,
+    mod_id: String,
+    loader: String,
+    minecraft_version: String,
+) -> Result<Project, String> {
+    project::create_minecraft_project(&name, &mod_id, &loader, &minecraft_version).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -84,6 +94,7 @@ pub fn run() {
             build_minecraft,
             fetch_registry,
             install_package,
+            minecraft_versions,
             create_minecraft_project
         ])
         .run(tauri::generate_context!())

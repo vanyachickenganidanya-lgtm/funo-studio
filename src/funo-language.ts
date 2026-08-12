@@ -26,7 +26,7 @@ export function registerFunoLanguage() {
     tokenPostfix: '.funo',
     keywords: ['fun', 'let', 'var', 'const', 'if', 'then', 'else', 'return', 'use', 'java', 'lib', 'public', 'mod', 'on', 'start', 'server_start', 'player_join', 'for', 'in', 'while', 'repeat', 'break', 'continue', 'new', 'true', 'false', 'null', 'and', 'or', 'not'],
     typeKeywords: ['byte', 'short', 'int', 'long', 'float', 'double', 'number', 'decimal', 'text', 'string', 'bool', 'boolean', 'char', 'list', 'set', 'map', 'any', 'void'],
-    builtins: ['println', 'print', 'readln', 'readInt', 'readLong', 'readDouble', 'readBool', 'toInt', 'toDouble', 'len', 'list', 'set', 'map', 'minecraft', 'fabric', 'forge', 'log', 'broadcast', 'tell', 'give', 'run_command', 'actionbar'],
+    builtins: ['println', 'print', 'readln', 'readInt', 'readLong', 'readDouble', 'readBool', 'toInt', 'toDouble', 'len', 'list', 'set', 'map', 'minecraft', 'fabric', 'forge', 'neoforge', 'log', 'broadcast', 'tell', 'give', 'run_command', 'actionbar'],
     operators: ['=', '>', '<', '!', '~', '?', ':', '==', '<=', '>=', '!=', '&&', '||', '+', '-', '*', '/', '^', '%', '->'],
     symbols: /[=><!~?:&|+\-*\/\^%]+/,
     tokenizer: {
@@ -75,6 +75,8 @@ export function registerFunoLanguage() {
         item('for range', 'Цикл по диапазону', 'for ${1:i} in ${2:0}..${3:10} {\n    ${4}\n}'),
         item('while', 'Цикл с условием', 'while ${1:условие} {\n    ${2}\n}'),
         item('minecraft.fabric', 'Подключить Fabric API', 'use minecraft.fabric'),
+        item('minecraft.forge', 'Подключить Forge API', 'use minecraft.forge'),
+        item('minecraft.neoforge', 'Подключить NeoForge API', 'use minecraft.neoforge'),
         item('minecraft events', 'События сервера и игрока', 'on server_start {\n    broadcast("${1:Сервер запущен!}")\n}\n\non player_join(player) {\n    tell("${2:Добро пожаловать!}")\n}'),
         item('java import', 'Подключить класс Java', 'use java "${1:java.util.ArrayList}"'),
         item('return(200)', 'Явное успешное завершение Funo', 'return(200)')

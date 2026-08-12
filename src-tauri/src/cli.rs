@@ -26,7 +26,7 @@ fn fail(text: impl AsRef<str>) -> i32 {
 
 fn help() {
     println!(
-        "{} {}\n{}\n\n{}\n  {}\n  {}\n  {}\n  {}\n\n{}\n  {}\n  {}\n  {}\n  {}\n\n{}\n  {}\n  {}\n\n{}\n  {}\n",
+        "{} {}\n{}\n\n{}\n  {}\n  {}\n  {}\n  {}\n\n{}\n  {}\n  {}\n  {}\n  {}\n\n{}\n  {}\n  {}\n  {}\n\n{}\n  {}\n",
         paint("36;1", "Funo"),
         VERSION,
         "Простой язык, JVM-компилятор и инструменты Minecraft",
@@ -41,7 +41,8 @@ fn help() {
         "funo pkg install <id>           скачать пакет и обновить funo.lock",
         "funo pkg remove <id>            удалить пакет из проекта",
         paint("1", "Minecraft"),
-        "funo minecraft new <имя> <mod_id> [fabric|forge]",
+        "funo minecraft new <имя> <mod_id> [fabric|forge|neoforge] [версия]",
+        "funo minecraft versions [loader]  показать доступные версии",
         "funo minecraft build [main.fun] собрать JAR мода через Gradle",
         paint("1", "Установка"),
         "funo setup                      установить CLI в пользовательский PATH"
@@ -315,16 +316,52 @@ fn minecraft_command(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("new") => {
             let Some(name) = args.get(1) else {
-                return fail("Пример: funo minecraft new \"Мой мод\" my_mod fabric");
+                return fail("Пример: funo minecraft new \"Мой мод\" my_mod fabric 1.21.1");
             };
             let Some(mod_id) = args.get(2) else {
                 return fail("Укажите mod_id маленькими латинскими буквами");
             };
             let loader = args.get(3).map(String::as_str).unwrap_or("fabric");
-            match project::create_minecraft_project(name, mod_id, loader) {
+            let runtime = match runtime() {
+                Ok(value) => value,
+                Err(error) => return fail(error),
+            };
+            let selected_version = if let Some(version) = args.get(4) {
+                version.clone()
+            } else {
+                match runtime.block_on(project::minecraft_versions(loader)) {
+                    Ok(versions) => match versions.first() {
+                        Some(version) => version.id.clone(),
+                        None => return fail(format!("Для {loader} нет доступных версий Minecraft")),
+                    },
+                    Err(error) => return fail(error),
+                }
+            };
+            match runtime.block_on(project::create_minecraft_project(name, mod_id, loader, &selected_version)) {
                 Ok(project) => {
-                    ok(format!("Проект создан: {}", project.root));
+                    ok(format!(
+                        "Проект создан: {} ({loader}, Minecraft {selected_version})",
+                        project.root
+                    ));
                     println!("Дальше: cd \"{}\" && funo minecraft build", project.root);
+                    0
+                }
+                Err(error) => fail(error),
+            }
+        }
+        Some("versions") => {
+            let loader = args.get(1).map(String::as_str).unwrap_or("fabric");
+            let runtime = match runtime() {
+                Ok(value) => value,
+                Err(error) => return fail(error),
+            };
+            match runtime.block_on(project::minecraft_versions(loader)) {
+                Ok(versions) => {
+                    println!("{}", paint("1", format!("Minecraft / {loader}")));
+                    for version in versions {
+                        let channel = if version.stable { "" } else { " preview" };
+                        println!("  {:<14} Java {}{}", version.label, version.java, channel);
+                    }
                     0
                 }
                 Err(error) => fail(error),
@@ -347,7 +384,7 @@ fn minecraft_command(args: &[String]) -> i32 {
                 fail(result.stderr)
             }
         }
-        _ => fail("Команды: funo minecraft new … | funo minecraft build"),
+        _ => fail("Команды: funo minecraft new … | versions | build"),
     }
 }
 
