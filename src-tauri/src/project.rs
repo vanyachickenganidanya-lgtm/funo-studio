@@ -77,7 +77,15 @@ official = "https://github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL"
 
 mod "hello_funo" {
     on start {
-        println("Мод Funo запущен!")
+        log("Мод Funo загружен")
+    }
+
+    on server_start {
+        broadcast("Сервер готов!")
+    }
+
+    on player_join(player) {
+        tell("Добро пожаловать!")
     }
 }
 "#,

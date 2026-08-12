@@ -50,6 +50,23 @@ fun main() {
 
 Точки с запятой не обязательны. `return(200)` в `main` означает успешное завершение Funo и преобразуется в обычный `return` JVM.
 
+### Коллекции
+
+```funo
+fun main() {
+    list<text> players = ["Alex", "Steve"]
+    set<int> ids = [10, 20, 20]
+    map<text, int> scores = map()
+
+    players.add("Sunny")
+    scores.put("Alex", 42)
+    println(len(players))
+    println(scores.get("Alex"))
+}
+```
+
+Коллекции изменяемые и используют знакомые JVM-методы: `add`, `remove`, `contains`, `get`, `put`, `clear`. Функции `list(…)`, `set(…)` и `map()` позволяют создавать их выражением.
+
 ### Переменные и ввод
 
 ```funo

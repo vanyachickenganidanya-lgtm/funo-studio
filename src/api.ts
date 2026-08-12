@@ -92,7 +92,7 @@ export async function ensureProject(): Promise<Project> {
     files: [
       { path: 'main.fun', content },
       { path: 'funo.toml', content: '[project]\nname = "my-first-project"\ntarget = "jvm-21"\nsuccess_code = 200' },
-      { path: 'src/minecraft.fun', content: 'use minecraft.fabric\n\nfun start() {\n    println("Мод запущен!")\n}' }
+      { path: 'src/minecraft.fun', content: 'use minecraft.fabric\n\nmod "hello_funo" {\n    on server_start {\n        broadcast("Сервер готов!")\n    }\n\n    on player_join(player) {\n        tell("Добро пожаловать!")\n    }\n}' }
     ]
   };
 }
@@ -127,7 +127,7 @@ export async function buildMinecraft(root: string, source: string): Promise<Buil
     success: diagnostics.length === 0,
     stdout: diagnostics.length ? '' : 'Browser preview: Java-мост создан. Desktop-версия запустит Gradle build.',
     stderr: diagnostics[0]?.message || '',
-    generated_java: 'package funo.generated;\n\npublic final class FunoMain {\n    public static void start() {\n        System.out.println("Minecraft-мод Funo запущен!");\n    }\n}',
+    generated_java: 'package funo.generated;\n\npublic final class FunoMain {\n    public static void start() { FunoMinecraft.log("Мод Funo загружен"); }\n    public static void serverStart(Object server) {\n        FunoMinecraft.bindServer(server);\n        FunoMinecraft.broadcast("Сервер готов!");\n    }\n    public static void playerJoin(Object player) {\n        FunoMinecraft.tell(player, "Добро пожаловать!");\n    }\n}',
     elapsed_ms: 18,
     diagnostics
   };
@@ -151,6 +151,6 @@ export async function createMinecraftProject(name: string, modId: string, loader
   if (isTauri()) return invoke<Project>('create_minecraft_project', { name, modId, loader });
   return {
     root: 'browser-preview', name, kind: `minecraft-${loader}`,
-    files: [{ path: 'main.fun', content: `use minecraft.${loader}\n\nmod "${modId}" {\n    on start {\n        println("Мод ${name} запущен!")\n    }\n}` }]
+    files: [{ path: 'main.fun', content: `use minecraft.${loader}\n\nmod "${modId}" {\n    on start {\n        log("Мод ${name} загружен")\n    }\n\n    on server_start {\n        broadcast("Сервер готов!")\n    }\n\n    on player_join(player) {\n        tell("Добро пожаловать!")\n    }\n}` }]
   };
 }
