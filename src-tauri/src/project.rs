@@ -1273,6 +1273,28 @@ mod tests {
     }
 
     #[test]
+    fn modern_forge_manifest_keeps_forge_dependency_schema() {
+        let root = std::env::temp_dir().join(format!("funo-forge-manifest-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let profile = MinecraftProfile {
+            loader: "forge".into(),
+            minecraft: "26.2".into(),
+            loader_version: "26.2-65.1.1".into(),
+            api_version: None,
+            mappings: None,
+            build_plugin: "[7.0.17,8)".into(),
+            java: 25,
+        };
+
+        create_forge_files(&root, "Current Forge", "current_forge", &profile).unwrap();
+        let manifest = fs::read_to_string(root.join("src/main/resources/META-INF/mods.toml")).unwrap();
+        assert_eq!(manifest.matches("mandatory=true").count(), 2);
+        assert!(!manifest.contains("type=\"required\""));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn generates_all_loader_layouts() {
         let root = std::env::temp_dir().join(format!("funo-generator-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
