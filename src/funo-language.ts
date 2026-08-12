@@ -26,7 +26,7 @@ export function registerFunoLanguage() {
     tokenPostfix: '.funo',
     keywords: ['fun', 'let', 'var', 'const', 'if', 'then', 'else', 'return', 'use', 'java', 'lib', 'public', 'mod', 'on', 'start', 'server_start', 'player_join', 'for', 'in', 'while', 'repeat', 'break', 'continue', 'new', 'true', 'false', 'null', 'and', 'or', 'not'],
     typeKeywords: ['byte', 'short', 'int', 'long', 'float', 'double', 'number', 'decimal', 'text', 'string', 'bool', 'boolean', 'char', 'list', 'set', 'map', 'any', 'void'],
-    builtins: ['println', 'print', 'readln', 'readInt', 'readLong', 'readDouble', 'readBool', 'toInt', 'toDouble', 'len', 'list', 'set', 'map', 'minecraft', 'fabric', 'forge', 'neoforge', 'log', 'broadcast', 'tell', 'give', 'run_command', 'actionbar'],
+    builtins: ['println', 'print', 'readln', 'readInt', 'readLong', 'readDouble', 'readBool', 'toInt', 'toDouble', 'len', 'list', 'set', 'map', 'minecraft', 'fabric', 'forge', 'neoforge', 'log', 'broadcast', 'tell', 'give', 'give_custom', 'define_item', 'craft_shapeless', 'craft_shaped', 'spawn_mob', 'set_mob_ai', 'mob_attribute', 'run_command', 'actionbar'],
     operators: ['=', '>', '<', '!', '~', '?', ':', '==', '<=', '>=', '!=', '&&', '||', '+', '-', '*', '/', '^', '%', '->'],
     symbols: /[=><!~?:&|+\-*\/\^%]+/,
     tokenizer: {
@@ -78,6 +78,14 @@ export function registerFunoLanguage() {
         item('minecraft.forge', 'Подключить Forge API', 'use minecraft.forge'),
         item('minecraft.neoforge', 'Подключить NeoForge API', 'use minecraft.neoforge'),
         item('minecraft events', 'События сервера и игрока', 'on server_start {\n    broadcast("${1:Сервер запущен!}")\n}\n\non player_join(player) {\n    tell("${2:Добро пожаловать!}")\n}'),
+        item('define_item', 'Псевдоним предмета Minecraft', 'define_item("${1:ruby}", "${2:minecraft:emerald}")', monaco.languages.CompletionItemKind.Function),
+        item('give_custom', 'Выдать игроку предмет по псевдониму', 'give_custom("${1:ruby}", ${2:1})', monaco.languages.CompletionItemKind.Function),
+        item('craft_shapeless', 'Бесформенный рецепт с учётом версии Minecraft', 'craft_shapeless("${1:ruby_block}", "${2:minecraft:emerald_block}", ${3:1}, "${4:minecraft:emerald}", "${5:minecraft:emerald}")', monaco.languages.CompletionItemKind.Function),
+        item('craft_shaped', 'Форменный рецепт: три строки и ключи', 'craft_shaped("${1:ruby_pickaxe}", "${2:minecraft:diamond_pickaxe}", ${3:1}, "${4:RRR}", "${5: S }", "${6: S }", "R=minecraft:emerald", "S=minecraft:stick")', monaco.languages.CompletionItemKind.Function),
+        item('spawn_mob', 'Создать моба в мире', 'spawn_mob("${1:minecraft:zombie}", ${2:0}, ${3:80}, ${4:0})', monaco.languages.CompletionItemKind.Function),
+        item('set_mob_ai', 'Управлять AI ближайших мобов этого типа', 'set_mob_ai("${1:minecraft:zombie}", ${2:true})', monaco.languages.CompletionItemKind.Function),
+        item('mob_attribute', 'Изменить атрибут ближайшего моба', 'mob_attribute("${1:minecraft:zombie}", "${2:minecraft:generic.max_health}", ${3:40.0})', monaco.languages.CompletionItemKind.Function),
+        item('native-ready main', 'Программа для JVM, C++ 17, Rust, JS и Python', 'fun main() {\n    int ${1:value} = ${2:42}\n    for i in 0..${3:5} {\n        println(${1:value} + i)\n    }\n}'),
         item('java import', 'Подключить класс Java', 'use java "${1:java.util.ArrayList}"'),
         item('return(200)', 'Явное успешное завершение Funo', 'return(200)')
       ] };
@@ -100,7 +108,14 @@ export function registerFunoLanguage() {
         use: '**use** подключает пакет Funo или класс Java.',
         mod: '**mod** описывает Minecraft-мод простым блоком.',
         broadcast: '**broadcast(text)** отправляет сообщение всем игрокам после события `server_start`.',
-        give: '**give(item, count)** выдаёт предмет игроку внутри `on player_join(player)`.'
+        give: '**give(item, count)** выдаёт предмет игроку внутри `on player_join(player)`.',
+        define_item: '**define_item(alias, itemId)** создаёт удобный псевдоним существующего Minecraft-предмета. Например, `define_item("ruby", "minecraft:emerald")`.',
+        give_custom: '**give_custom(alias, count)** выдаёт предмет, ранее объявленный через `define_item`.',
+        craft_shapeless: '**craft_shapeless(id, result, count, ...ingredients)** создаёт JSON-рецепт. Funo сам выбирает схему для версии Minecraft.',
+        craft_shaped: '**craft_shaped(id, result, count, row1, row2, row3, ...keys)** создаёт форменный рецепт. Ключ выглядит как `"R=minecraft:redstone"`.',
+        spawn_mob: '**spawn_mob(entityId, x, y, z)** создаёт моба через серверный API.',
+        set_mob_ai: '**set_mob_ai(entityId, enabled)** включает или отключает AI ближайших мобов выбранного типа.',
+        mob_attribute: '**mob_attribute(entityId, attributeId, value)** меняет базовый атрибут ближайшего моба.'
       };
       return word && docs[word] ? { range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column + word.length), contents: [{ value: docs[word] }] } : null;
     }

@@ -1,7 +1,7 @@
 {
   "name": "funo-studio",
   "private": true,
-  "version": "0.3.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -9,7 +9,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "node scripts/prepare-sidecar.mjs && tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

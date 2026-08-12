@@ -388,79 +388,19 @@ fn minecraft_command(args: &[String]) -> i32 {
     }
 }
 
-#[cfg(unix)]
 fn install_to_path() -> Result<String, String> {
-    use std::os::unix::fs::PermissionsExt;
-    let source = env::current_exe().map_err(|e| e.to_string())?;
-    let home = dirs::home_dir().ok_or("Не найдена домашняя папка")?;
-    let bin = home.join(".local").join("bin");
-    fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
-    let destination = bin.join("funo");
-    if source.canonicalize().ok().as_ref() != destination.canonicalize().ok().as_ref() {
-        fs::copy(&source, &destination).map_err(|e| format!("Не удалось скопировать CLI: {e}"))?;
-    }
-    fs::set_permissions(&destination, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
-    let line = "\n# Funo CLI\nexport PATH=\"$HOME/.local/bin:$PATH\"\n";
-    let profile = home.join(".profile");
-    append_once(&profile, ".local/bin", line)?;
-    if env::var("SHELL").unwrap_or_default().contains("zsh") {
-        append_once(&home.join(".zshrc"), ".local/bin", line)?;
-    }
+    let status = crate::path_setup::install()?;
     Ok(format!(
-        "Установлено в {}. Перезапустите терминал или выполните: source ~/.profile",
-        destination.display()
+        "Funo установлен: {}. Откройте новый терминал и выполните funo --version.",
+        status.launcher
     ))
-}
-
-#[cfg(windows)]
-fn install_to_path() -> Result<String, String> {
-    use std::process::Command;
-    let source = env::current_exe().map_err(|e| e.to_string())?;
-    let base = env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join("AppData").join("Local")))
-        .ok_or("Не найдена папка LocalAppData")?;
-    let bin = base.join("Funo").join("bin");
-    fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
-    let destination = bin.join("funo.exe");
-    if source.canonicalize().ok().as_ref() != destination.canonicalize().ok().as_ref() {
-        fs::copy(&source, &destination).map_err(|e| format!("Не удалось скопировать CLI: {e}"))?;
-    }
-    let escaped = bin.to_string_lossy().replace('\'', "''");
-    let script = format!(
-        "$b='{escaped}';$p=[Environment]::GetEnvironmentVariable('Path','User');\
-         if (($p -split ';') -notcontains $b) {{ [Environment]::SetEnvironmentVariable('Path', (($p.TrimEnd(';')+';'+$b).Trim(';')), 'User') }}"
-    );
-    let status = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .status()
-        .map_err(|e| format!("Не удалось обновить PATH: {e}"))?;
-    if !status.success() {
-        return Err("PowerShell не смог обновить пользовательский PATH".into());
-    }
-    Ok(format!(
-        "Установлено в {} и добавлено в пользовательский PATH. Откройте новый терминал.",
-        destination.display()
-    ))
-}
-
-#[cfg(unix)]
-fn append_once(path: &Path, needle: &str, content: &str) -> Result<(), String> {
-    use std::io::Write;
-    let existing = fs::read_to_string(path).unwrap_or_default();
-    if !existing.contains(needle) {
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .map_err(|e| e.to_string())?;
-        file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 
 pub fn run() -> i32 {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let mut args: Vec<String> = env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--cli") {
+        args.remove(0);
+    }
     match args.first().map(String::as_str) {
         None | Some("help") | Some("--help") | Some("-h") => {
             help();

@@ -156,9 +156,21 @@ pub fn write_project_file(project_root: &str, relative_path: &str, content: &str
 }
 
 pub fn load_project(root: &Path) -> Result<Project, String> {
+    let hidden_file = root.join(".funo-hidden.json");
+    let mut hidden_paths: Vec<String> = fs::read_to_string(&hidden_file)
+        .ok()
+        .and_then(|value| serde_json::from_str(&value).ok())
+        .unwrap_or_default();
+    hidden_paths.sort();
+    hidden_paths.dedup();
+    let hidden = |path: &str| hidden_paths.iter().any(|value| path == value || path.starts_with(&format!("{value}/")));
     let mut files = Vec::new();
-    collect_files(root, root, &mut files, 0)?;
+    let mut directories = Vec::new();
+    collect_files(root, root, &mut files, &mut directories, 0)?;
+    files.retain(|file| !hidden(&file.path));
+    directories.retain(|path| !hidden(path));
     files.sort_by(|left, right| left.path.cmp(&right.path));
+    directories.sort();
     let manifest = files
         .iter()
         .find(|file| file.path == "funo.toml")
@@ -179,10 +191,64 @@ pub fn load_project(root: &Path) -> Result<Project, String> {
         name,
         kind,
         files,
+        directories,
+        hidden_paths,
     })
 }
 
-fn collect_files(root: &Path, dir: &Path, out: &mut Vec<ProjectFile>, depth: usize) -> Result<(), String> {
+pub fn set_project_path_hidden(project_root: &str, relative_path: &str, hidden: bool) -> Result<Project, String> {
+    let root = PathBuf::from(project_root);
+    if !root.is_absolute() {
+        return Err("Некорректная папка проекта".into());
+    }
+    let relative = safe_relative(relative_path)?.to_string_lossy().replace('\\', "/");
+    if relative.is_empty() || relative == "funo.toml" || relative == "main.fun" {
+        return Err("Главный manifest и main.fun скрывать нельзя".into());
+    }
+    if !root.join(&relative).exists() && hidden {
+        return Err("Файл или папка не найдены".into());
+    }
+    let path = root.join(".funo-hidden.json");
+    let mut values: Vec<String> = fs::read_to_string(&path).ok().and_then(|value| serde_json::from_str(&value).ok()).unwrap_or_default();
+    values.retain(|value| value != &relative);
+    if hidden {
+        values.push(relative);
+    }
+    values.sort();
+    values.dedup();
+    fs::write(path, serde_json::to_string_pretty(&values).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    load_project(&root)
+}
+
+pub fn create_project_folder(project_root: &str, relative_path: &str) -> Result<Project, String> {
+    let root = PathBuf::from(project_root);
+    if !root.is_absolute() {
+        return Err("Некорректная папка проекта".into());
+    }
+    let relative = safe_relative(relative_path)?;
+    if relative.as_os_str().is_empty() {
+        return Err("Введите имя папки".into());
+    }
+    fs::create_dir_all(root.join(relative))
+        .map_err(|error| format!("Не удалось создать папку: {error}"))?;
+    load_project(&root)
+}
+
+pub fn reload_project(project_root: &str) -> Result<Project, String> {
+    let root = PathBuf::from(project_root);
+    if !root.is_absolute() {
+        return Err("Некорректная папка проекта".into());
+    }
+    load_project(&root)
+}
+
+fn collect_files(
+    root: &Path,
+    dir: &Path,
+    out: &mut Vec<ProjectFile>,
+    directories: &mut Vec<String>,
+    depth: usize,
+) -> Result<(), String> {
     if depth > 6 {
         return Ok(());
     }
@@ -190,14 +256,25 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<ProjectFile>, depth: usi
         let entry = entry.map_err(|error| error.to_string())?;
         let path = entry.path();
         let name = entry.file_name();
-        if name == ".funo" || name == ".gradle" || name == "build" || name == "run" {
+        if name == ".funo" || name == ".gradle" || name == ".funo-hidden.json" || name == ".funo-instance.gradle" || name == "build" || name == "run" {
             continue;
         }
         if path.is_dir() {
-            collect_files(root, &path, out, depth + 1)?;
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            directories.push(relative);
+            collect_files(root, &path, out, directories, depth + 1)?;
         } else if matches!(
             path.extension().and_then(|extension| extension.to_str()),
-            Some("fun" | "toml" | "json" | "gradle" | "properties" | "md")
+            Some(
+                "fun" | "toml" | "json" | "gradle" | "properties" | "md" | "markdown"
+                    | "rs" | "cpp" | "cc" | "c" | "h" | "hpp" | "java" | "kt" | "kts"
+                    | "py" | "js" | "mjs" | "ts" | "tsx" | "jsx" | "yaml" | "yml" | "xml"
+                    | "html" | "css" | "scss" | "sh" | "ps1" | "bat" | "cmd"
+            )
         ) || path.file_name().and_then(|value| value.to_str()) == Some("settings.gradle")
         {
             if let Ok(content) = fs::read_to_string(&path) {
@@ -273,8 +350,26 @@ fn version_at_least(version: &str, major: u64, minor: u64, patch: u64) -> bool {
     candidate >= (major, minor, patch)
 }
 
+fn is_calendar_release(version: &str) -> bool {
+    Regex::new(r"^(?:2[6-9]|[3-9][0-9])\.\d+(?:\.\d+)?$")
+        .unwrap()
+        .is_match(version)
+}
+
+fn is_weekly_snapshot(version: &str) -> bool {
+    Regex::new(r"^(?:2[6-9]|[3-9][0-9])w\d{2}[a-z]$")
+        .unwrap()
+        .is_match(&version.to_ascii_lowercase())
+}
+
+fn is_supported_fabric_version(version: &str) -> bool {
+    (version.starts_with("1.") && version_at_least(version, 1, 14, 0))
+        || is_calendar_release(version)
+        || is_weekly_snapshot(version)
+}
+
 fn java_for_minecraft(version: &str) -> u8 {
-    if !version.starts_with("1.") || version_at_least(version, 26, 1, 0) {
+    if is_calendar_release(version) || is_weekly_snapshot(version) {
         25
     } else if version_at_least(version, 1, 20, 5) {
         21
@@ -386,9 +481,7 @@ pub async fn minecraft_versions(loader: &str) -> Result<Vec<MinecraftVersion>, S
             };
             let mut result: Vec<_> = games
                 .into_iter()
-                .filter(|game| {
-                    !game.version.starts_with("1.") || version_at_least(&game.version, 1, 14, 0)
-                })
+                .filter(|game| is_supported_fabric_version(&game.version))
                 .map(|game| MinecraftVersion {
                     java: java_for_minecraft(&game.version),
                     id: game.version.clone(),
@@ -456,7 +549,10 @@ async fn resolve_fabric(minecraft: &str) -> Result<MinecraftProfile, String> {
         .ok_or_else(|| format!("Для Minecraft {minecraft} не найден Fabric Loader"))?;
 
     let yarn_url = format!("https://meta.fabricmc.net/v2/versions/yarn/{minecraft}");
-    let mappings = if !minecraft.starts_with("1.") || version_at_least(minecraft, 26, 1, 0) {
+    // Mojang's calendar releases are unobfuscated. Weekly snapshots and old
+    // 1.x releases still require Yarn; do not classify every unusual Fabric
+    // catalog identifier as a calendar release.
+    let mappings = if is_calendar_release(minecraft) {
         None
     } else {
         let response = client
@@ -662,7 +758,7 @@ official = "https://github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL"
 }
 
 fn create_fabric_files(root: &Path, name: &str, mod_id: &str, profile: &MinecraftProfile) -> Result<(), String> {
-    let unobfuscated = !profile.minecraft.starts_with("1.") || version_at_least(&profile.minecraft, 26, 1, 0);
+    let unobfuscated = is_calendar_release(&profile.minecraft);
     let plugin_id = if unobfuscated { "net.fabricmc.fabric-loom" } else { "net.fabricmc.fabric-loom-remap" };
     let mappings = profile
         .mappings
@@ -1152,10 +1248,13 @@ public final class FunoMod implements ModInitializer {
 const FUNO_MINECRAFT_RUNTIME: &str = r#"package funo.generated;
 
 import java.lang.reflect.Method;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Небольшой Funo API поверх Fabric, Forge и NeoForge. */
 public final class FunoMinecraft {
     private static Object server;
+    private static final Map<String, String> customItems = new ConcurrentHashMap<>();
     private FunoMinecraft() {}
 
     public static void bindServer(Object value) {
@@ -1182,6 +1281,55 @@ public final class FunoMinecraft {
 
     public static void give(Object player, Object item, Object count) {
         command("give " + playerName(player) + " " + item + " " + count);
+    }
+
+    /** Creates a stable Funo item alias backed by a vanilla or loader item. */
+    public static void defineItem(Object id, Object baseItem) {
+        defineItem(id, baseItem, id);
+    }
+
+    public static void defineItem(Object id, Object baseItem, Object displayName) {
+        customItems.put(String.valueOf(id), String.valueOf(baseItem));
+        log("Предмет " + id + " (" + displayName + ") использует " + baseItem);
+    }
+
+    public static void giveCustom(Object player, Object id, Object count) {
+        String item = customItems.get(String.valueOf(id));
+        if (item == null) {
+            log("Неизвестный предмет Funo: " + id);
+            return;
+        }
+        give(player, item, count);
+    }
+
+    public static void spawnMob(Object entityType, Object position) {
+        command("summon " + entityType + " " + position);
+    }
+
+    public static void spawnMob(Object entityType, Object x, Object y, Object z) {
+        spawnMob(entityType, x + " " + y + " " + z);
+    }
+
+    public static void spawnMob(Object entityType, Object position, Object customName) {
+        String name = String.valueOf(customName).replace("\\", "\\\\").replace("\"", "\\\"");
+        command("summon " + entityType + " " + position + " {CustomName:'{\"text\":\"" + name + "\"}'}");
+    }
+
+    public static void spawnMob(Object entityType, Object x, Object y, Object z, Object customName) {
+        spawnMob(entityType, x + " " + y + " " + z, customName);
+    }
+
+    public static void setMobAi(Object selector, Object enabled) {
+        command("data merge entity " + entitySelector(selector) + " {NoAI:" + (Boolean.parseBoolean(String.valueOf(enabled)) ? "0b" : "1b") + "}");
+    }
+
+    public static void mobAttribute(Object selector, Object attribute, Object value) {
+        command("attribute " + entitySelector(selector) + " " + attribute + " base set " + value);
+    }
+
+    private static String entitySelector(Object value) {
+        String selector = String.valueOf(value);
+        return selector.startsWith("@") ? selector : "@e[type=" + selector + ",sort=nearest,limit=1]";
     }
 
     public static boolean command(Object value) {
@@ -1270,6 +1418,16 @@ mod tests {
         assert_eq!(java_for_minecraft("1.18.2"), 17);
         assert_eq!(java_for_minecraft("1.21.1"), 21);
         assert_eq!(java_for_minecraft("26.2"), 25);
+        assert_eq!(java_for_minecraft("26w32a"), 25);
+    }
+
+    #[test]
+    fn fabric_calendar_detection_rejects_special_catalog_entries() {
+        assert!(is_calendar_release("26.2"));
+        assert!(!is_calendar_release("26w32a"));
+        assert!(!is_calendar_release("3D Shareware v1.34"));
+        assert!(is_supported_fabric_version("26w32a"));
+        assert!(!is_supported_fabric_version("3D Shareware v1.34"));
     }
 
     #[test]

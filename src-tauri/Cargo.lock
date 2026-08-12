@@ -866,7 +866,7 @@ dependencies = [
 
 [[package]]
 name = "funo-studio"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "dirs",
  "hex",
@@ -879,6 +879,7 @@ dependencies = [
  "tauri-build",
  "tokio",
  "url",
+ "winreg",
 ]
 
 [[package]]

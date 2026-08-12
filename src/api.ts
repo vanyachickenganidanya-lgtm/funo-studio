@@ -23,7 +23,14 @@ export type BuildResult = {
 };
 
 export type ProjectFile = { path: string; content: string };
-export type Project = { root: string; name: string; kind: string; files: ProjectFile[] };
+export type Project = {
+  root: string;
+  name: string;
+  kind: string;
+  files: ProjectFile[];
+  directories: string[];
+  hidden_paths: string[];
+};
 export type MinecraftVersion = {
   id: string;
   label: string;
@@ -94,7 +101,7 @@ export async function ensureProject(): Promise<Project> {
   if (isTauri()) return invoke<Project>('ensure_demo_project');
   const content = localStorage.getItem('funo-browser-code') || demoCode;
   return {
-    root: 'browser-preview', name: 'Мой первый проект', kind: 'console',
+    root: 'browser-preview', name: 'Мой первый проект', kind: 'console', directories: ['src'], hidden_paths: [],
     files: [
       { path: 'main.fun', content },
       { path: 'funo.toml', content: '[project]\nname = "my-first-project"\ntarget = "jvm-21"\nsuccess_code = 200' },
@@ -182,10 +189,223 @@ export async function createMinecraftProject(
   if (isTauri()) return invoke<Project>('create_minecraft_project', { name, modId, loader, minecraftVersion });
   const safeName = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   return {
-    root: 'browser-preview', name, kind: `minecraft-${loader}`,
+    root: 'browser-preview', name, kind: `minecraft-${loader}`, directories: [], hidden_paths: [],
     files: [
       { path: 'main.fun', content: `use minecraft.${loader}\n\nmod "${modId}" {\n    on start {\n        log("Мод ${safeName} загружен")\n    }\n\n    on server_start {\n        broadcast("Сервер Minecraft ${minecraftVersion} готов!")\n    }\n\n    on player_join(player) {\n        tell("Добро пожаловать!")\n    }\n}` },
       { path: 'funo.toml', content: `[project]\nname = "${safeName}"\nkind = "minecraft-${loader}"\ntarget = "jvm-${minecraftJava(minecraftVersion)}"\n\n[minecraft]\nmod_id = "${modId}"\nloader = "${loader}"\nversion = "${minecraftVersion}"\n` }
     ]
   };
+}
+
+export type StudioSettings = {
+  onboarding_completed: boolean;
+  beginner: boolean;
+  installer_beginner_choice?: boolean;
+  tutorial_step: number;
+  compiler_backend: string;
+  microsoft_client_id: string;
+};
+
+export type PathStatus = {
+  installed: boolean;
+  bin_dir: string;
+  launcher: string;
+  path_contains_bin: boolean;
+};
+
+export type InstalledMod = {
+  project_id: string;
+  version_id: string;
+  name: string;
+  file_name: string;
+  sha512: string;
+  source: string;
+};
+
+export type MinecraftInstance = {
+  id: string;
+  name: string;
+  project_root: string;
+  minecraft_version: string;
+  loader: string;
+  game_dir: string;
+  jvm_args: string;
+  game_args: string;
+  launch_task: string;
+  mods: InstalledMod[];
+};
+
+export type ModrinthProject = {
+  project_id: string;
+  slug: string;
+  title: string;
+  description: string;
+  author: string;
+  icon_url?: string;
+  downloads: number;
+  versions: string[];
+  categories: string[];
+};
+
+export type PluginProject = {
+  id: string;
+  name: string;
+  language: string;
+  kind: string;
+  root: string;
+  repository_hint: string;
+};
+
+export type PluginCheck = { success: boolean; summary: string; output: string };
+export type MicrosoftAuthChallenge = {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  expires_in: number;
+  interval: number;
+  message: string;
+};
+export type MinecraftAccount = { username: string; uuid: string; authenticated: boolean };
+
+const defaultSettings: StudioSettings = {
+  onboarding_completed: false,
+  beginner: true,
+  tutorial_step: 0,
+  compiler_backend: 'jvm',
+  microsoft_client_id: ''
+};
+
+export async function loadSettings(): Promise<StudioSettings> {
+  if (isTauri()) return invoke<StudioSettings>('get_settings');
+  try { return { ...defaultSettings, ...JSON.parse(localStorage.getItem('funo-settings') || '{}') }; }
+  catch { return { ...defaultSettings }; }
+}
+
+export async function saveSettings(value: StudioSettings): Promise<StudioSettings> {
+  if (isTauri()) return invoke<StudioSettings>('save_settings', { value });
+  localStorage.setItem('funo-settings', JSON.stringify(value));
+  return value;
+}
+
+export async function getPathStatus(): Promise<PathStatus> {
+  if (isTauri()) return invoke<PathStatus>('path_status');
+  return { installed: false, path_contains_bin: false, bin_dir: '~/.local/bin', launcher: '~/.local/bin/funo' };
+}
+
+export async function installPath(): Promise<PathStatus> {
+  if (isTauri()) return invoke<PathStatus>('install_path');
+  throw new Error('Установка PATH доступна в desktop-версии.');
+}
+
+export async function uninstallPath(): Promise<PathStatus> {
+  if (isTauri()) return invoke<PathStatus>('uninstall_path');
+  throw new Error('Управление PATH доступно в desktop-версии.');
+}
+
+export async function createFolder(root: string, path: string): Promise<Project> {
+  if (isTauri()) return invoke<Project>('create_project_folder', { projectRoot: root, relativePath: path });
+  const project = await ensureProject();
+  if (!project.directories.includes(path)) project.directories.push(path);
+  return project;
+}
+
+export async function reloadProject(root: string): Promise<Project> {
+  if (isTauri()) return invoke<Project>('reload_project', { projectRoot: root });
+  return ensureProject();
+}
+
+export async function setPathHidden(root: string, path: string, hidden: boolean): Promise<Project> {
+  if (isTauri()) return invoke<Project>('set_project_path_hidden', { projectRoot: root, relativePath: path, hidden });
+  const project = await ensureProject();
+  project.hidden_paths = hidden ? [...new Set([...project.hidden_paths, path])] : project.hidden_paths.filter(value => value !== path);
+  return project;
+}
+
+export async function runBackend(root: string, source: string, target: string, run: boolean): Promise<BuildResult> {
+  if (target === 'jvm') return runCode(root, source);
+  if (isTauri()) return invoke<BuildResult>('build_backend', { projectRoot: root, source, target, run });
+  return {
+    success: true,
+    stdout: `Предпросмотр backend ${target}: desktop-версия создаст и ${run ? 'запустит' : 'соберёт'} программу.`,
+    stderr: '', generated_java: `// ${target} preview generated from Funo`, elapsed_ms: 1, diagnostics: []
+  };
+}
+
+export async function listInstances(): Promise<MinecraftInstance[]> {
+  if (isTauri()) return invoke<MinecraftInstance[]>('list_instances');
+  return JSON.parse(localStorage.getItem('funo-instances') || '[]');
+}
+
+export async function createInstance(name: string, root: string, version: string, loader: string): Promise<MinecraftInstance> {
+  if (isTauri()) return invoke<MinecraftInstance>('create_instance', { name, projectRoot: root, minecraftVersion: version, loader });
+  const instance: MinecraftInstance = { id: `preview-${Date.now()}`, name, project_root: root, minecraft_version: version, loader, game_dir: `preview/${name}`, jvm_args: '-Xmx2G', game_args: '', launch_task: 'runClient', mods: [] };
+  const values = await listInstances(); values.push(instance); localStorage.setItem('funo-instances', JSON.stringify(values)); return instance;
+}
+
+export async function updateInstance(instance: MinecraftInstance): Promise<MinecraftInstance> {
+  if (isTauri()) return invoke<MinecraftInstance>('update_instance', { instance });
+  const values = (await listInstances()).map(value => value.id === instance.id ? instance : value); localStorage.setItem('funo-instances', JSON.stringify(values)); return instance;
+}
+
+export async function deleteInstance(id: string): Promise<void> {
+  if (isTauri()) return invoke('delete_instance', { id });
+  localStorage.setItem('funo-instances', JSON.stringify((await listInstances()).filter(value => value.id !== id)));
+}
+
+export async function launchInstance(id: string): Promise<string> {
+  if (isTauri()) return invoke<string>('launch_instance', { id });
+  return `Предпросмотр запуска ${id}. В desktop-версии будет выполнен изолированный runClient.`;
+}
+
+export async function searchModrinth(query: string, loader: string, version: string): Promise<ModrinthProject[]> {
+  if (isTauri()) return invoke<ModrinthProject[]>('search_modrinth', { query, loader, gameVersion: version });
+  return [];
+}
+
+export async function installModrinth(instanceId: string, projectId: string): Promise<MinecraftInstance> {
+  if (isTauri()) return invoke<MinecraftInstance>('install_modrinth', { instanceId, projectId });
+  throw new Error('Загрузка Modrinth доступна в desktop-версии.');
+}
+
+export async function removeInstanceMod(instanceId: string, projectId: string): Promise<MinecraftInstance> {
+  if (isTauri()) return invoke<MinecraftInstance>('remove_instance_mod', { instanceId, projectId });
+  throw new Error('Управление модами доступно в desktop-версии.');
+}
+
+export async function createPlugin(parent: string, name: string, language: string, kind = 'tooling'): Promise<PluginProject> {
+  if (isTauri()) return invoke<PluginProject>('create_plugin', { parent, name, language, kind });
+  return { id: name.toLowerCase().replace(/\W+/g, '-'), name, language, kind, root: `${parent}/${name}`, repository_hint: 'https://github.com/your-name/your-plugin' };
+}
+
+export async function checkPlugin(root: string): Promise<PluginCheck> {
+  if (isTauri()) return invoke<PluginCheck>('check_plugin', { root });
+  return { success: true, summary: 'Проверка доступна в desktop-версии', output: root };
+}
+
+export async function installPlugin(root: string): Promise<PluginProject> {
+  if (isTauri()) return invoke<PluginProject>('install_plugin', { root });
+  throw new Error('Установка плагина доступна в desktop-версии.');
+}
+
+export async function listPlugins(): Promise<PluginProject[]> {
+  if (isTauri()) return invoke<PluginProject[]>('list_plugins');
+  return [];
+}
+
+export async function beginMicrosoftAuth(): Promise<MicrosoftAuthChallenge> {
+  if (isTauri()) return invoke<MicrosoftAuthChallenge>('begin_microsoft_auth');
+  throw new Error('Microsoft-вход доступен в desktop-версии.');
+}
+
+export async function completeMicrosoftAuth(deviceCode: string): Promise<MinecraftAccount> {
+  return invoke<MinecraftAccount>('complete_microsoft_auth', { deviceCode });
+}
+
+export async function currentMicrosoftAccount(): Promise<MinecraftAccount | null> {
+  if (isTauri()) return invoke<MinecraftAccount | null>('current_microsoft_account');
+  return null;
+}
+
+export async function logoutMicrosoft(): Promise<void> {
+  if (isTauri()) return invoke('logout_microsoft');
 }

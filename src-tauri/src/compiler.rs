@@ -1,6 +1,6 @@
-use crate::models::{BuildResult, Diagnostic};
+use crate::{models::{BuildResult, Diagnostic}, process};
 use regex::Regex;
-use std::{fs, path::PathBuf, process::Command, time::Instant};
+use std::{fs, path::PathBuf, time::Instant};
 
 fn diagnostic(
     severity: &str,
@@ -448,6 +448,18 @@ fn minecraft_event_body(source: &str, event: &str, has_player: bool) -> Vec<Stri
         }
         let line = if let Some(value) = trimmed.strip_prefix("log(").and_then(|v| v.strip_suffix(')')) {
             format!("FunoMinecraft.log({});", expression_to_java(value))
+        } else if let Some(value) = trimmed.strip_prefix("define_item(").and_then(|v| v.strip_suffix(')')) {
+            format!("FunoMinecraft.defineItem({});", expression_to_java(value))
+        } else if let Some(value) = trimmed.strip_prefix("craft_shapeless(").and_then(|v| v.strip_suffix(')')) {
+            format!("FunoMinecraft.log(\"Рецепт зарегистрирован: \" + String.valueOf({}));", expression_to_java(value.split(',').next().unwrap_or("\"recipe\"")))
+        } else if let Some(value) = trimmed.strip_prefix("craft_shaped(").and_then(|v| v.strip_suffix(')')) {
+            format!("FunoMinecraft.log(\"Рецепт зарегистрирован: \" + String.valueOf({}));", expression_to_java(value.split(',').next().unwrap_or("\"recipe\"")))
+        } else if let Some(value) = trimmed.strip_prefix("spawn_mob(").and_then(|v| v.strip_suffix(')')) {
+            format!("FunoMinecraft.spawnMob({});", expression_to_java(value))
+        } else if let Some(value) = trimmed.strip_prefix("set_mob_ai(").and_then(|v| v.strip_suffix(')')) {
+            format!("FunoMinecraft.setMobAi({});", expression_to_java(value))
+        } else if let Some(value) = trimmed.strip_prefix("mob_attribute(").and_then(|v| v.strip_suffix(')')) {
+            format!("FunoMinecraft.mobAttribute({});", expression_to_java(value))
         } else if let Some(value) = trimmed.strip_prefix("broadcast(").and_then(|v| v.strip_suffix(')')) {
             format!("FunoMinecraft.broadcast({});", expression_to_java(value))
         } else if let Some(value) = trimmed.strip_prefix("run_command(").and_then(|v| v.strip_suffix(')')) {
@@ -459,6 +471,8 @@ fn minecraft_event_body(source: &str, event: &str, has_player: bool) -> Vec<Stri
                 format!("FunoMinecraft.tell(player, {});", expression_to_java(value))
             } else if let Some(value) = trimmed.strip_prefix("give(").and_then(|v| v.strip_suffix(')')) {
                 format!("FunoMinecraft.give(player, {});", expression_to_java(value))
+            } else if let Some(value) = trimmed.strip_prefix("give_custom(").and_then(|v| v.strip_suffix(')')) {
+                format!("FunoMinecraft.giveCustom(player, {});", expression_to_java(value))
             } else if let Some(cap) = typed_decl.captures(trimmed) {
                 let source_type = format!("{}{}", &cap[1], cap.get(2).map(|v| v.as_str()).unwrap_or(""));
                 format!("{} {} = {};", java_type(&source_type), &cap[3], expression_to_java_typed(&cap[4], Some(&source_type)))
@@ -963,7 +977,7 @@ fn compile_program(
             all_classpath.push(path.clone());
         }
     }
-    let mut javac = Command::new("javac");
+    let mut javac = process::command("javac");
     javac
         .arg("-encoding")
         .arg("UTF-8")
@@ -998,7 +1012,7 @@ fn compile_program(
     if run_program {
         let mut runtime_paths = vec![classes.to_string_lossy().to_string()];
         runtime_paths.extend(all_classpath);
-        let run = match Command::new("java")
+        let run = match process::command("java")
             .arg("-cp")
             .arg(join_classpath(&runtime_paths))
             .arg("Main")
@@ -1025,7 +1039,7 @@ fn compile_program(
     }
 
     let jar_path = build.join("app.jar");
-    let jar = Command::new("jar")
+    let jar = process::command("jar")
         .arg("--create")
         .arg("--file")
         .arg(&jar_path)
@@ -1070,6 +1084,89 @@ pub fn compile_only(project_root: &str, source: &str, classpath: &[String]) -> B
     compile_program(project_root, source, classpath, false)
 }
 
+fn manifest_section_value(manifest: &str, section_name: &str, key_name: &str) -> Option<String> {
+    let mut section = "";
+    for source_line in manifest.lines() {
+        let line = source_line.split('#').next().unwrap_or("").trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line.trim_matches(&['[', ']'][..]).trim();
+            continue;
+        }
+        if section != section_name {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        if key.trim() == key_name {
+            return Some(value.trim().trim_matches('"').trim_matches('\'').to_string());
+        }
+    }
+    None
+}
+
+fn minecraft_at_least(version: &str, wanted: (u32, u32, u32)) -> bool {
+    let mut parts = version
+        .split('.')
+        .take(3)
+        .map(|part| part.chars().take_while(|character| character.is_ascii_digit()).collect::<String>().parse::<u32>().unwrap_or(0));
+    let current = (parts.next().unwrap_or(0), parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+    current >= wanted
+}
+
+fn generate_minecraft_recipes(root: &std::path::Path, source: &str) -> Result<usize, String> {
+    let manifest = fs::read_to_string(root.join("funo.toml")).map_err(|error| error.to_string())?;
+    let mod_id = manifest_section_value(&manifest, "minecraft", "mod_id")
+        .filter(|value| Regex::new(r"^[a-z][a-z0-9_]*$").unwrap().is_match(value))
+        .ok_or("В секции [minecraft] файла funo.toml не найден корректный mod_id")?;
+    let version = manifest_section_value(&manifest, "minecraft", "version").unwrap_or_else(|| "1.20.1".into());
+    let singular_recipe_folder = minecraft_at_least(&version, (1, 21, 0));
+    let result_uses_id = minecraft_at_least(&version, (1, 20, 5));
+    let old_dir = root.join("src/main/resources/data").join(&mod_id).join("recipes");
+    let new_dir = root.join("src/main/resources/data").join(&mod_id).join("recipe");
+    let _ = fs::remove_dir_all(&old_dir);
+    let _ = fs::remove_dir_all(&new_dir);
+    let destination = if singular_recipe_folder { new_dir } else { old_dir };
+    let shapeless = Regex::new(r#"(?m)^\s*craft_shapeless\(\s*"([a-z0-9_./-]+)"\s*,\s*"([a-z0-9_:./-]+)"\s*,\s*(\d+)\s*,\s*(.+)\)\s*$"#).unwrap();
+    let shaped = Regex::new(r#"(?m)^\s*craft_shaped\(\s*"([a-z0-9_./-]+)"\s*,\s*"([a-z0-9_:./-]+)"\s*,\s*(\d+)\s*,\s*(.+)\)\s*$"#).unwrap();
+    let quoted = Regex::new(r#""([^"]+)""#).unwrap();
+    let mut count = 0;
+    for cap in shapeless.captures_iter(source) {
+        let ingredients = quoted.captures_iter(&cap[4]).map(|value| {
+            serde_json::json!({ "item": &value[1] })
+        }).collect::<Vec<_>>();
+        if ingredients.is_empty() {
+            return Err(format!("Рецепт {} не содержит ингредиентов", &cap[1]));
+        }
+        let amount = cap[3].parse::<u64>().unwrap_or(1).max(1);
+        let result = if result_uses_id { serde_json::json!({ "id": &cap[2], "count": amount }) } else { serde_json::json!({ "item": &cap[2], "count": amount }) };
+        let recipe = serde_json::json!({ "type": "minecraft:crafting_shapeless", "ingredients": ingredients, "result": result });
+        fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
+        fs::write(destination.join(format!("{}.json", &cap[1])), serde_json::to_string_pretty(&recipe).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+        count += 1;
+    }
+    for cap in shaped.captures_iter(source) {
+        let values = quoted.captures_iter(&cap[4]).map(|value| value[1].to_string()).collect::<Vec<_>>();
+        if values.len() < 4 {
+            return Err(format!("Формат craft_shaped {}: три строки узора и пары X=minecraft:item", &cap[1]));
+        }
+        let pattern = values.iter().take(3).cloned().collect::<Vec<_>>();
+        let mut key = serde_json::Map::new();
+        for value in values.iter().skip(3) {
+            let (symbol, item) = value.split_once('=').ok_or_else(|| format!("Ключ рецепта должен выглядеть как A=minecraft:stone: {value}"))?;
+            if symbol.chars().count() != 1 {
+                return Err(format!("Ключ рецепта должен быть одним символом: {symbol}"));
+            }
+            key.insert(symbol.into(), serde_json::json!({ "item": item }));
+        }
+        let amount = cap[3].parse::<u64>().unwrap_or(1).max(1);
+        let result = if result_uses_id { serde_json::json!({ "id": &cap[2], "count": amount }) } else { serde_json::json!({ "item": &cap[2], "count": amount }) };
+        let recipe = serde_json::json!({ "type": "minecraft:crafting_shaped", "pattern": pattern, "key": key, "result": result });
+        fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
+        fs::write(destination.join(format!("{}.json", &cap[1])), serde_json::to_string_pretty(&recipe).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 pub fn build_minecraft(project_root: &str, source: &str) -> BuildResult {
     let started = Instant::now();
     let generated_java = match transpile_minecraft_entry(source) {
@@ -1090,6 +1187,9 @@ pub fn build_minecraft(project_root: &str, source: &str) -> BuildResult {
         Ok(root) => root,
         Err(error) => return failed(error, generated_java, started),
     };
+    if let Err(error) = generate_minecraft_recipes(&root, source) {
+        return failed(format!("Не удалось создать рецепты: {error}"), generated_java, started);
+    }
     let generated_path = root.join("src/main/java/funo/generated/FunoMain.java");
     if let Some(parent) = generated_path.parent() {
         if let Err(error) = fs::create_dir_all(parent) {
@@ -1111,16 +1211,16 @@ pub fn build_minecraft(project_root: &str, source: &str) -> BuildResult {
     let gradlew = root.join(if cfg!(windows) { "gradlew.bat" } else { "gradlew" });
     let mut command = if gradlew.exists() {
         if cfg!(windows) {
-            let mut cmd = Command::new(&gradlew);
+            let mut cmd = process::command(&gradlew);
             cmd.arg("build");
             cmd
         } else {
-            let mut cmd = Command::new("sh");
+            let mut cmd = process::command("sh");
             cmd.arg(&gradlew).arg("build");
             cmd
         }
     } else {
-        let mut cmd = Command::new("gradle");
+        let mut cmd = process::command("gradle");
         cmd.arg("build");
         cmd
     };
@@ -1231,5 +1331,20 @@ mod tests {
         let diagnostics = check_source("fun main() {\n printn(1)\n}");
         assert_eq!(diagnostics[0].code, "FUN001");
         assert_eq!(diagnostics[0].replacement.as_deref(), Some("println"));
+    }
+
+    #[test]
+    fn minecraft_manifest_values_do_not_use_project_version() {
+        let manifest = "[project]\nversion = \"9.9.9\"\n\n[minecraft]\nmod_id = \"hello\"\nversion = \"1.20.5\"\n";
+        assert_eq!(manifest_section_value(manifest, "minecraft", "version").as_deref(), Some("1.20.5"));
+        assert_eq!(manifest_section_value(manifest, "minecraft", "mod_id").as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn recipe_schema_versions_are_distinct() {
+        assert!(!minecraft_at_least("1.20.4", (1, 20, 5)));
+        assert!(minecraft_at_least("1.20.5", (1, 20, 5)));
+        assert!(!minecraft_at_least("1.20.6", (1, 21, 0)));
+        assert!(minecraft_at_least("1.21.1", (1, 21, 0)));
     }
 }
