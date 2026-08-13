@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod cli;
 pub mod compiler;
+pub mod interpreter;
 pub mod launcher;
 pub mod models;
 pub mod modrinth;
@@ -114,6 +115,16 @@ fn transpile_source(source: String, minecraft: bool) -> BuildResult {
             artifact: None,
         },
     }
+}
+
+/// Executes ordinary Funo inside the application without a JDK or subprocess.
+/// This command is available on every platform and intentionally refuses
+/// Minecraft sources; their Gradle/JAR build remains desktop-only.
+#[tauri::command]
+async fn execute_source(source: String) -> BuildResult {
+    tauri::async_runtime::spawn_blocking(move || interpreter::execute(&source))
+        .await
+        .unwrap_or_else(|error| task_error("встроенного интерпретатора", error))
 }
 
 #[tauri::command]
@@ -337,6 +348,7 @@ pub fn run() {
             reload_project,
             check_source,
             transpile_source,
+            execute_source,
             compile_and_run,
             build_backend,
             build_minecraft,

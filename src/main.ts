@@ -323,7 +323,7 @@ function renderSearch() {
 
 function renderRunSide() {
   if (!desktopToolsAvailable) {
-    document.getElementById('sidebarContent')!.innerHTML = `<div class="run-side"><button class="primary full" id="runSideButton">${icon('check')} Проверить код</button><p class="side-help">Android-версия проверяет синтаксис локально и показывает созданный Java-код. Запуск JVM, Gradle и системных компиляторов оставлен desktop-версии.</p><div class="mobile-capabilities"><span>✓ Редактор и автосохранение</span><span>✓ Проверка Funo</span><span>✓ Предпросмотр Java</span><span>— Запуск и сборка</span></div></div>`;
+    document.getElementById('sidebarContent')!.innerHTML = `<div class="run-side"><button class="primary full" id="runSideButton">${icon('play')} Запустить код</button><p class="side-help">Обычные Funo-программы выполняются прямо в APK встроенным безопасным интерпретатором. Minecraft, JVM, Gradle и системные компиляторы остаются desktop-функциями.</p><div class="mobile-capabilities"><span>✓ Редактор и автосохранение</span><span>✓ Запуск обычного Funo</span><span>✓ Проверка и Java-предпросмотр</span><span>— Сборка Minecraft/JAR</span></div></div>`;
     document.getElementById('runSideButton')!.onclick = () => { document.body.classList.remove('sidebar-open'); void execute(); };
     return;
   }
@@ -711,7 +711,7 @@ function renderLessons() {
 
 async function renderSettings() {
   const desktopSections = `<section><h2>Компилятор</h2><label><span><b>Backend по умолчанию</b><small>JVM, C++ 17, Rust, JavaScript или Python</small></span><select id="defaultBackend"><option value="jvm">JVM / Java</option><option value="cpp">C++ 17</option><option value="rust">Rust</option><option value="javascript">JavaScript</option><option value="python">Python</option></select></label><div class="cli-card"><div>${icon('terminal')}</div><span><b>Funo CLI и PATH</b><small id="pathDescription">Проверяю пользовательский PATH…</small><code id="pathLauncher"></code></span><button class="primary" id="togglePath" disabled>Проверка…</button></div></section><section><h2>Minecraft и Microsoft</h2><label><span><b>Microsoft Entra Client ID</b><small>Public client с разрешённым device-code flow. Секрет не нужен и не хранится.</small></span><input id="microsoftClientId" value="${escapeHtml(settings.microsoft_client_id)}" placeholder="00000000-0000-0000-0000-000000000000"></label><label><span><b>Аккаунт</b><small>${account ? `Подключён: ${escapeHtml(account.username)}` : 'Не подключён'}</small></span><button class="secondary" id="settingsAccount">${account ? 'Управление' : 'Войти'}</button></label><div class="cli-card compact"><div>${icon('java')}</div><span><b>JDK и Gradle для Minecraft</b><small>Проверка версий, обновления и установка с обязательным резервом 30 ГиБ</small></span><button class="secondary" id="settingsToolchains">Открыть</button></div></section>`;
-  const mobileSections = `<section><h2>Android APK</h2><div class="mobile-notice settings-mobile"><b>Локальная мобильная Studio</b><span>Проект, настройки и прогресс обучения сохраняются на этом устройстве. Синтаксис проверяет встроенный Rust-компилятор Funo.</span></div><div class="mobile-capability-grid"><article>${icon('check')}<span><b>Доступно</b><small>Редактор, файлы проекта, проверка, Java-предпросмотр, вики и каталоги</small></span></article><article>${icon('terminal')}<span><b>Только desktop</b><small>JDK, Gradle, PATH, запуск процессов, Minecraft Launcher и Plugin SDK</small></span></article></div></section>`;
+  const mobileSections = `<section><h2>Android APK</h2><div class="mobile-notice settings-mobile"><b>Локальная мобильная Studio</b><span>Проект, настройки и прогресс обучения сохраняются на этом устройстве. Обычный Funo запускает встроенный Rust-интерпретатор без JDK и внешних процессов.</span></div><div class="mobile-capability-grid"><article>${icon('play')}<span><b>Доступно</b><small>Редактор, файлы проекта, запуск Funo, проверка, Java-предпросмотр, вики и каталоги</small></span></article><article>${icon('terminal')}<span><b>Только desktop</b><small>JDK/JAR, Gradle и сборка Minecraft, PATH, системные backend-ы, Launcher и Plugin SDK</small></span></article></div></section>`;
   showSurface(`<div class="surface-page settings-page"><div class="page-hero"><div><span class="overline">НАСТРОЙКИ</span><h1>Funo Studio</h1><p>Редактор хранит исходники локально. Код не отправляется в облако.</p></div>${runtimePlatform.android ? '<span class="platform-pill">Android</span>' : ''}</div><div class="settings-list"><section><h2>Редактор и обучение</h2><label><span><b>Режим по умолчанию</b><small>В режиме новичка подсказки подробнее</small></span><select id="defaultMode"><option value="novice">Я новичок</option><option value="pro">Профессиональный</option></select></label><label><span><b>Интерактивное обучение</b><small>Продолжить с сохранённого шага</small></span><button class="secondary" id="openLearning">Открыть путь</button></label></section>${desktopToolsAvailable ? desktopSections : mobileSections}<section><h2>Пакеты</h2><label><span><b>Официальный GitHub</b><small>Индекс проверенных библиотек${desktopToolsAvailable ? '' : ' · просмотр на Android'}</small></span><input value="vanyachickenganidanya-lgtm/funo_libsOFFICAL" readonly></label>${desktopToolsAvailable ? `<div class="cli-card compact"><div>${icon('package')}</div><span><b>Свои плагины</b><small>Rust, C++ 17, TypeScript, JavaScript и Python</small></span><button class="secondary" id="settingsPlugins">Открыть SDK</button></div>` : ''}</section></div></div>`);
   const modeSelect = document.getElementById('defaultMode') as HTMLSelectElement;
   modeSelect.value = settings.beginner ? 'novice' : 'pro';
@@ -848,21 +848,31 @@ async function execute() {
   selectPanel('terminal');
   if (compactLayout()) document.body.classList.remove('panel-collapsed');
   const panel = document.getElementById('panelBody')!;
-  panel.innerHTML = `<span class="muted">› ${desktopToolsAvailable ? 'funo run' : 'funo check'}\n  Проверяю типы и создаю Java…</span>`;
+  const minecraft = project.kind.startsWith('minecraft');
+  const mobileAction = minecraft ? 'funo check' : 'funo run · встроенный интерпретатор';
+  panel.innerHTML = `<span class="muted">› ${desktopToolsAvailable ? 'funo run' : mobileAction}\n  ${!desktopToolsAvailable && !minecraft ? 'Запускаю обычную Funo-программу без JDK…' : 'Проверяю типы и создаю Java…'}</span>`;
   try {
-    const minecraft = project.kind.startsWith('minecraft');
     if (!desktopToolsAvailable) {
-      const result = await transpileSource(editor.getValue(), minecraft);
+      // Minecraft source remains source-only on Android. Ordinary projects are
+      // really executed by the bounded, process-free Rust interpreter.
+      const result = minecraft
+        ? await transpileSource(editor.getValue(), true)
+        : await runCode(project.root, editor.getValue());
       diagnostics = result.diagnostics;
       setDiagnostics(editor.getModel()!, diagnostics);
       document.getElementById('problemCount')!.textContent = String(diagnostics.length);
       document.getElementById('errorStatus')!.textContent = `× ${diagnostics.filter(item => item.severity === 'error').length}   △ ${diagnostics.filter(item => item.severity === 'warning').length}`;
       if (result.success) {
         (window as any).__lastJava = result.generated_java;
-        panel.innerHTML = `<span class="success">✓ Синтаксис Funo проверен</span>\n<span class="muted">Java-предпросмотр готов · ${result.elapsed_ms} мс\nЗапуск JDK/Gradle выполняется в desktop-версии.</span>`;
-        toast('Код проверен и сохранён на устройстве.');
+        if (minecraft) {
+          panel.innerHTML = `<span class="success">✓ Синтаксис Minecraft-проекта проверен</span>\n<span class="muted">Java-предпросмотр готов · ${result.elapsed_ms} мс\nGradle/JAR-сборка мода выполняется только в desktop-версии.</span>`;
+          toast('Код мода проверен и сохранён на устройстве.');
+        } else {
+          panel.innerHTML = `${escapeHtml(result.stdout)}${result.stdout ? '\n' : ''}<span class="success">✓ Выполнено на устройстве</span>\n<span class="muted">Встроенный Funo-интерпретатор · ${result.elapsed_ms} мс · без JDK</span>`;
+          toast('Funo-программа выполнена на устройстве.');
+        }
       } else {
-        panel.innerHTML = `<span class="error">Проверка нашла ошибку</span>\n${escapeHtml(result.stderr)}`;
+        panel.innerHTML = `<span class="error">${minecraft ? 'Проверка нашла ошибку' : 'Выполнение остановлено'}</span>\n${escapeHtml(result.stderr)}${result.stdout ? `\n<span class="muted">Вывод до остановки:</span>\n${escapeHtml(result.stdout)}` : ''}`;
         if (diagnostics.length) renderFriendlyError(diagnostics[0]);
       }
       return;
@@ -917,7 +927,7 @@ document.getElementById('collapsePanel')!.onclick = () => {
 function renderPanel() {
   const body = document.getElementById('panelBody')!;
   if (currentPanel === 'problems') body.innerHTML = diagnostics.length ? diagnostics.map(d => `<button class="problem-line" data-line="${d.line}"><span class="${d.severity}">●</span> ${escapeHtml(d.title)} <em>[${d.code}] строка ${d.line}</em></button>`).join('') : '<span class="muted">Проблем не обнаружено.</span>';
-  else if (currentPanel === 'output') body.innerHTML = `<span class="muted">Funo Language Server\nОфициальный реестр: vanyachickenganidanya-lgtm/funo_libsOFFICAL\n${desktopToolsAvailable ? 'JVM backend: готов' : 'Android: локальная проверка и Java-предпросмотр'}</span>`;
+  else if (currentPanel === 'output') body.innerHTML = `<span class="muted">Funo Language Server\nОфициальный реестр: vanyachickenganidanya-lgtm/funo_libsOFFICAL\n${desktopToolsAvailable ? 'JVM backend: готов' : 'Android: встроенный запуск Funo, проверка и Java-предпросмотр'}</span>`;
   document.querySelectorAll<HTMLElement>('.problem-line').forEach(x => x.onclick = () => { editor.revealLineInCenter(Number(x.dataset.line)); editor.setPosition({ lineNumber: Number(x.dataset.line), column: 1 }); editor.focus(); });
 }
 document.getElementById('clearPanel')!.onclick = () => document.getElementById('panelBody')!.innerHTML = '';
@@ -942,7 +952,7 @@ async function showOnboarding() {
     ? await getPathStatus().catch(() => ({ installed: false, path_contains_bin: false, bin_dir: '', launcher: 'funo' }))
     : { installed: false, path_contains_bin: false, bin_dir: '', launcher: 'funo' };
   const beginnerDefault = settings.installer_beginner_choice ?? settings.beginner;
-  const pathStep = desktopToolsAvailable ? `<section><h3>2. Команда в терминале</h3><label class="choice-card"><input type="checkbox" id="onboardingPath" ${path.installed ? 'checked disabled' : 'checked'}><span><b>${path.installed ? 'Funo уже добавлен в PATH' : 'Добавить Funo в пользовательский PATH'}</b><small>Команда <code>funo</code> станет доступна в новых терминалах. Права администратора не нужны.</small></span></label></section>` : `<section class="mobile-welcome"><h3>Android-режим</h3><p>Исходники хранятся на устройстве. Здесь доступны редактор, проверка Funo, Java-предпросмотр, обучение и каталоги.</p></section>`;
+  const pathStep = desktopToolsAvailable ? `<section><h3>2. Команда в терминале</h3><label class="choice-card"><input type="checkbox" id="onboardingPath" ${path.installed ? 'checked disabled' : 'checked'}><span><b>${path.installed ? 'Funo уже добавлен в PATH' : 'Добавить Funo в пользовательский PATH'}</b><small>Команда <code>funo</code> станет доступна в новых терминалах. Права администратора не нужны.</small></span></label></section>` : `<section class="mobile-welcome"><h3>Android-режим</h3><p>Исходники хранятся на устройстве. Здесь доступны редактор, настоящий запуск обычного Funo без JDK, проверка, Java-предпросмотр, обучение и каталоги.</p></section>`;
   openModal('Добро пожаловать в Funo Studio', `<div class="onboarding"><div class="onboarding-mark">F</div><p>Настроим Studio перед первым проектом. Режим обучения позже можно изменить в настройках.</p><section><h3>1. Как вы хотите учиться?</h3><label class="choice-card"><input type="radio" name="experience" value="novice" ${beginnerDefault ? 'checked' : ''}><span><b>Я новичок</b><small>Больше объяснений и интерактивный путь из пяти программ</small></span></label><label class="choice-card"><input type="radio" name="experience" value="pro" ${beginnerDefault ? '' : 'checked'}><span><b>Профессиональный режим</b><small>Компактные ошибки и меньше подсказок</small></span></label></section>${pathStep}<div class="modal-actions"><button class="primary big" id="finishOnboarding">Начать работу</button></div></div>`);
   document.getElementById('modal')!.classList.add('onboarding-modal');
   document.querySelector<HTMLElement>('#modal > header > button')!.classList.add('hidden');
@@ -962,7 +972,7 @@ async function showOnboarding() {
 }
 
 document.getElementById('commandCenter')!.onclick = () => {
-  openModal('Команды Funo', `<div class="command-list"><button data-command="run">${icon(desktopToolsAvailable ? 'play' : 'check')} ${desktopToolsAvailable ? 'Запустить' : 'Проверить'} текущий файл <kbd>Ctrl Enter</kbd></button><button data-command="packages">${icon('package')} Открыть библиотеки</button><button data-command="minecraft">${icon('cube')} Создать Minecraft-мод</button><button data-command="wiki">${icon('book')} Открыть вики</button></div>`);
+  openModal('Команды Funo', `<div class="command-list"><button data-command="run">${icon('play')} Запустить текущий файл <kbd>Ctrl Enter</kbd></button><button data-command="packages">${icon('package')} Открыть библиотеки</button><button data-command="minecraft">${icon('cube')} Создать Minecraft-мод</button><button data-command="wiki">${icon('book')} Открыть вики</button></div>`);
   document.querySelectorAll<HTMLElement>('[data-command]').forEach(button => button.onclick = () => {
     document.getElementById('modalLayer')!.classList.add('hidden');
     const command = button.dataset.command!;

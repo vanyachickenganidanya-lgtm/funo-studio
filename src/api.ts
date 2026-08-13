@@ -215,7 +215,9 @@ export async function transpileSource(source: string, minecraft = false): Promis
 
 export async function runCode(root: string, source: string): Promise<BuildResult> {
   if (desktopToolsAvailable) return invoke<BuildResult>('compile_and_run', { projectRoot: root, source, classpath: [] });
-  if (runtimePlatform.android) throw new Error('Запуск JVM недоступен на Android. Проверка синтаксиса и предпросмотр Java работают без JDK.');
+  // Android executes ordinary Funo in the process-free Rust interpreter. It
+  // does not invoke Java/ART, download a JDK or permit arbitrary subprocesses.
+  if (runtimePlatform.android && isTauri()) return invoke<BuildResult>('execute_source', { source });
   const diagnostics = browserDiagnostics(source);
   if (diagnostics.length) return { success: false, stdout: '', stderr: diagnostics[0].message, generated_java: '', elapsed_ms: 0, diagnostics };
   const n = Number(/println\s*\(\s*fib\((\d+)\)\s*\)/.exec(source)?.[1] || 10);
