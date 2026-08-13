@@ -230,8 +230,10 @@ export async function runCode(root: string, source: string): Promise<BuildResult
 }
 
 export async function buildMinecraft(root: string, source: string): Promise<BuildResult> {
-  if (desktopToolsAvailable) return invoke<BuildResult>('build_minecraft', { projectRoot: root, source });
-  if (runtimePlatform.android) throw new Error('Gradle-сборка Minecraft-мода доступна в desktop-версии. На Android можно редактировать и проверять исходник.');
+  if (desktopToolsAvailable) return invoke<BuildResult>('build_minecraft', { projectRoot: root, source, project: null });
+  if (runtimePlatform.android && isTauri()) {
+    return invoke<BuildResult>('build_minecraft', { projectRoot: root, source, project: loadLocalProject() });
+  }
   const diagnostics = browserDiagnostics(source);
   return {
     success: diagnostics.length === 0,
@@ -284,8 +286,9 @@ export async function minecraftToolchainStatus(
   loader: string,
   checkUpdates = false
 ): Promise<MinecraftToolchainStatus> {
-  if (desktopToolsAvailable) return invoke<MinecraftToolchainStatus>('minecraft_toolchain_status', { projectRoot, minecraftVersion, loader, checkUpdates });
-  if (runtimePlatform.android) throw new Error('JDK и Gradle не устанавливаются в Android APK. Соберите мод в desktop-версии Funo Studio.');
+  if (desktopToolsAvailable || (runtimePlatform.android && isTauri())) {
+    return invoke<MinecraftToolchainStatus>('minecraft_toolchain_status', { projectRoot, minecraftVersion, loader, checkUpdates });
+  }
   const requiredJava = minecraftJava(minecraftVersion);
   const reserveBytes = 30 * 1024 ** 3;
   const jdkSize = 220 * 1024 ** 2;
@@ -307,8 +310,9 @@ export async function installMinecraftToolchain(
   loader: string,
   destinationRoot: string
 ): Promise<MinecraftToolchainStatus> {
-  if (desktopToolsAvailable) return invoke<MinecraftToolchainStatus>('install_minecraft_toolchain', { projectRoot, minecraftVersion, loader, destinationRoot });
-  if (runtimePlatform.android) throw new Error('Установка JDK и Gradle недоступна на Android.');
+  if (desktopToolsAvailable || (runtimePlatform.android && isTauri())) {
+    return invoke<MinecraftToolchainStatus>('install_minecraft_toolchain', { projectRoot, minecraftVersion, loader, destinationRoot });
+  }
   const status = await minecraftToolchainStatus(projectRoot, minecraftVersion, loader);
   status.ready = true;
   status.message = 'Предпросмотр: JDK и Gradle установлены.';
@@ -494,8 +498,13 @@ export async function deleteInstance(id: string): Promise<void> {
 
 export async function launchInstance(id: string): Promise<string> {
   if (desktopToolsAvailable) return invoke<string>('launch_instance', { id });
-  if (runtimePlatform.android) throw new Error('Запуск Minecraft требует desktop JDK/Gradle и недоступен на Android.');
+  if (runtimePlatform.android && isTauri()) return invoke<string>('open_android_launcher');
   return `Предпросмотр запуска ${id}. В desktop-версии будет выполнен изолированный runClient.`;
+}
+
+export async function openAndroidLauncher(): Promise<string> {
+  if (runtimePlatform.android && isTauri()) return invoke<string>('open_android_launcher');
+  throw new Error('Встроенный Android Launcher доступен только в APK.');
 }
 
 export async function searchModrinth(query: string, loader: string, version: string): Promise<ModrinthProject[]> {

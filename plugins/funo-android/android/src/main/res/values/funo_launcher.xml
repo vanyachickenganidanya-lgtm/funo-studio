@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="application_package" translatable="false">dev.funo.studio</string>
+    <string name="storageProviderAuthorities" translatable="false">dev.funo.studio.funo.gamefolder</string>
+    <string name="shareProviderAuthority" translatable="false">dev.funo.studio.funo.controlfolder</string>
+    <string name="curseforge_api_key" translatable="false">DUMMY</string>
+</resources>

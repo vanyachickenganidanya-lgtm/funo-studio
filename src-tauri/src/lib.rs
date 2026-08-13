@@ -20,6 +20,9 @@ use models::{
     RegistryPackage, RegistryResponse, StudioSettings,
 };
 
+#[cfg(target_os = "android")]
+use tauri_plugin_funo_android::{BuildRequest as AndroidBuildRequest, FunoAndroidExt, ToolchainRequest as AndroidToolchainRequest};
+
 fn task_error(label: &str, error: impl std::fmt::Display) -> BuildResult {
     BuildResult {
         success: false,
@@ -148,13 +151,71 @@ async fn build_backend(project_root: String, source: String, target: String, run
 }
 
 #[tauri::command]
-async fn build_minecraft(project_root: String, source: String) -> BuildResult {
-    if cfg!(mobile) {
-        return mobile_task_error("Gradle-сборка Minecraft-мода");
-    }
-    tauri::async_runtime::spawn_blocking(move || compiler::build_minecraft(&project_root, &source))
+async fn build_minecraft(
+    app: tauri::AppHandle,
+    project_root: String,
+    source: String,
+    project: Option<Project>,
+) -> BuildResult {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        let Some(project) = project else {
+            return task_error("Android Minecraft-сборки", "Не переданы файлы мобильного проекта");
+        };
+        let base = match app.path().app_data_dir() {
+            Ok(path) => path,
+            Err(error) => return task_error("Android Minecraft-сборки", error),
+        };
+        let root = match crate::project::materialize_android_minecraft(&base, &project).await {
+            Ok(path) => path,
+            Err(error) => return task_error("подготовки Android Minecraft-проекта", error),
+        };
+        let source_for_prepare = source.clone();
+        let root_for_prepare = root.to_string_lossy().to_string();
+        let prepared = match tauri::async_runtime::spawn_blocking(move || {
+            compiler::prepare_minecraft_mobile(&root_for_prepare, &source_for_prepare)
+        })
         .await
-        .unwrap_or_else(|error| task_error("Minecraft-сборки", error))
+        {
+            Ok(value) => value,
+            Err(error) => return task_error("генерации Android Minecraft-мода", error),
+        };
+        if !prepared.success {
+            return prepared;
+        }
+        let (minecraft_version, loader) = match toolchains::project_requirements(&root) {
+            Ok(value) => value,
+            Err(error) => return task_error("чтения Android Minecraft-проекта", error),
+        };
+        let request = AndroidBuildRequest {
+            project_root: root.to_string_lossy().to_string(),
+            source,
+            minecraft_version,
+            loader,
+        };
+        let app_for_build = app.clone();
+        let native = tauri::async_runtime::spawn_blocking(move || {
+            app_for_build.funo_android().build_minecraft::<BuildResult>(request)
+        })
+        .await;
+        return match native {
+            Ok(Ok(mut result)) => {
+                result.generated_java = prepared.generated_java;
+                result
+            }
+            Ok(Err(error)) => task_error("встроенной Android Gradle-сборки", error),
+            Err(error) => task_error("Android Gradle-сборки", error),
+        };
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, project);
+        tauri::async_runtime::spawn_blocking(move || compiler::build_minecraft(&project_root, &source))
+            .await
+            .unwrap_or_else(|error| task_error("Minecraft-сборки", error))
+    }
 }
 
 #[tauri::command]
@@ -238,36 +299,87 @@ async fn launch_instance(id: String) -> Result<String, String> {
 
 #[tauri::command]
 async fn minecraft_toolchain_status(
+    app: tauri::AppHandle,
     project_root: String,
     minecraft_version: String,
     loader: String,
     check_updates: bool,
 ) -> Result<MinecraftToolchainStatus, String> {
-    desktop_only("Проверка JDK и Gradle")?;
-    toolchains::status(
-        &project_root,
-        &minecraft_version,
-        &loader,
-        check_updates,
-    )
-    .await
+    #[cfg(target_os = "android")]
+    {
+        let request = AndroidToolchainRequest {
+            project_root,
+            minecraft_version,
+            loader,
+            check_updates,
+            destination_root: String::new(),
+        };
+        let app_for_status = app.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            app_for_status
+                .funo_android()
+                .toolchain_status::<MinecraftToolchainStatus>(request)
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        toolchains::status(&project_root, &minecraft_version, &loader, check_updates).await
+    }
 }
 
 #[tauri::command]
 async fn install_minecraft_toolchain(
+    app: tauri::AppHandle,
     project_root: String,
     minecraft_version: String,
     loader: String,
     destination_root: String,
 ) -> Result<MinecraftToolchainStatus, String> {
-    desktop_only("Установка JDK и Gradle")?;
-    toolchains::install(
-        &project_root,
-        &minecraft_version,
-        &loader,
-        &destination_root,
-    )
-    .await
+    #[cfg(target_os = "android")]
+    {
+        let request = AndroidToolchainRequest {
+            project_root,
+            minecraft_version,
+            loader,
+            check_updates: true,
+            destination_root,
+        };
+        let app_for_install = app.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            app_for_install
+                .funo_android()
+                .install_toolchain::<MinecraftToolchainStatus>(request)
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        toolchains::install(&project_root, &minecraft_version, &loader, &destination_root).await
+    }
+}
+
+#[tauri::command]
+async fn open_android_launcher(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        return app
+            .funo_android()
+            .open_launcher()
+            .map(|response| response.value)
+            .map_err(|error| error.to_string());
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Err("Встроенный Android Launcher доступен только в APK".into())
+    }
 }
 
 #[tauri::command]
@@ -339,7 +451,11 @@ fn logout_microsoft() -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_funo_android::init());
+
+    builder
         .invoke_handler(tauri::generate_handler![
             ensure_demo_project,
             write_project_file,
@@ -368,6 +484,7 @@ pub fn run() {
             launch_instance,
             minecraft_toolchain_status,
             install_minecraft_toolchain,
+            open_android_launcher,
             search_modrinth,
             install_modrinth,
             remove_instance_mod,

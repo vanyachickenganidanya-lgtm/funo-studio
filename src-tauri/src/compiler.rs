@@ -1404,6 +1404,67 @@ fn generate_minecraft_recipes(root: &std::path::Path, source: &str) -> Result<us
     Ok(count)
 }
 
+/// Generates every loader-specific source/resource needed by a Minecraft mod,
+/// but deliberately does not create a desktop subprocess. Android calls this
+/// before handing the private project to the embedded JVM plugin.
+#[cfg(target_os = "android")]
+pub fn prepare_minecraft_mobile(project_root: &str, source: &str) -> BuildResult {
+    let started = Instant::now();
+    let generated_java = match transpile_minecraft_entry(source) {
+        Ok(java) => java,
+        Err(diagnostics) => {
+            return BuildResult {
+                success: false,
+                stdout: String::new(),
+                stderr: "В исходнике есть ошибка".into(),
+                generated_java: String::new(),
+                elapsed_ms: started.elapsed().as_millis(),
+                diagnostics,
+                artifact: None,
+            }
+        }
+    };
+    let root = match safe_project_root(project_root) {
+        Ok(root) => root,
+        Err(error) => return failed(error, generated_java, started),
+    };
+    let (minecraft_version, loader) = match toolchains::project_requirements(&root) {
+        Ok(requirements) => requirements,
+        Err(error) => return failed(error, generated_java, started),
+    };
+    if source_uses_minecraft_call(source, "damage") && !minecraft_at_least(&minecraft_version, (1, 19, 4)) {
+        return failed(
+            format!("damage(...) требует Minecraft 1.19.4 или новее, а проект использует Minecraft {minecraft_version}."),
+            generated_java,
+            started,
+        );
+    }
+    if let Err(error) = generate_minecraft_recipes(&root, source) {
+        return failed(format!("Не удалось создать рецепты: {error}"), generated_java, started);
+    }
+    if let Err(error) = project::refresh_minecraft_support(&root, &loader, &minecraft_version) {
+        return failed(error, generated_java, started);
+    }
+    let generated_path = root.join("src/main/java/funo/generated/FunoMain.java");
+    if let Some(parent) = generated_path.parent() {
+        if let Err(error) = fs::create_dir_all(parent) {
+            return failed(format!("Не удалось создать Java-мост: {error}"), generated_java, started);
+        }
+    }
+    if let Err(error) = fs::write(&generated_path, &generated_java) {
+        return failed(format!("Не удалось обновить Java-мост: {error}"), generated_java, started);
+    }
+    BuildResult {
+        success: true,
+        stdout: "Android-проект подготовлен для локальной Gradle-сборки".into(),
+        stderr: String::new(),
+        generated_java,
+        elapsed_ms: started.elapsed().as_millis(),
+        diagnostics: Vec::new(),
+        artifact: None,
+    }
+}
+
 pub fn build_minecraft(project_root: &str, source: &str) -> BuildResult {
     let started = Instant::now();
     let generated_java = match transpile_minecraft_entry(source) {

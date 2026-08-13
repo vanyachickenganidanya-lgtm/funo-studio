@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+    <uses-feature android:name="android.hardware.type.pc" android:required="false" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
+    <application
+        android:name="net.kdt.pojavlaunch.PojavApplication"
+        android:allowNativeHeapPointerTagging="false"
+        android:hasFragileUserData="true"
+        android:largeHeap="true">
+
+        <activity android:name="net.kdt.pojavlaunch.MissingStorageActivity" android:exported="false" />
+        <activity android:name="net.kdt.pojavlaunch.TestStorageActivity" android:exported="false" android:process=":launcher" />
+        <activity
+            android:name="net.kdt.pojavlaunch.LauncherActivity"
+            android:exported="false"
+            android:process=":launcher"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name="net.kdt.pojavlaunch.ImportControlActivity"
+            android:configChanges="keyboard|keyboardHidden"
+            android:exported="false"
+            android:process=":launcher"
+            android:launchMode="singleInstance"
+            android:windowSoftInputMode="stateVisible" />
+        <activity
+            android:name="net.kdt.pojavlaunch.FatalErrorActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|keyboard|navigation"
+            android:theme="@style/Theme.AppCompat.DayNight.Dialog" />
+        <activity
+            android:name="net.kdt.pojavlaunch.ShowErrorActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|keyboard|navigation"
+            android:theme="@style/Theme.AppCompat.DayNight.Dialog" />
+        <activity
+            android:name="net.kdt.pojavlaunch.ExitActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|keyboard|navigation"
+            android:theme="@style/Theme.AppCompat.DayNight.Dialog" />
+        <activity
+            android:name="net.kdt.pojavlaunch.JavaGUILauncherActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
+            android:process=":gui_installer"
+            android:screenOrientation="sensorLandscape" />
+        <activity
+            android:name="net.kdt.pojavlaunch.CustomControlsActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|keyboard|navigation"
+            android:exported="false"
+            android:process=":launcher"
+            android:screenOrientation="sensorLandscape" />
+        <activity
+            android:name="net.kdt.pojavlaunch.MainActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
+            android:launchMode="singleTop"
+            android:process=":game"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name="dev.funo.studio.android.FunoBuildActivity"
+            android:exported="false"
+            android:process=":build"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
+
+        <provider
+            android:name="net.kdt.pojavlaunch.scoped.FolderProvider"
+            android:authorities="${applicationId}.funo.gamefolder"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+
+        <service
+            android:name="net.kdt.pojavlaunch.services.ProgressService"
+            android:foregroundServiceType="dataSync"
+            android:process=":launcher" />
+        <service
+            android:name="net.kdt.pojavlaunch.services.GameService"
+            android:foregroundServiceType="specialUse"
+            android:process=":game">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs a locally installed Minecraft Java instance selected by the user." />
+        </service>
+    </application>
+
+    <queries>
+        <package android:name="net.kdt.pojavlaunch.ffmpeg" />
+    </queries>
+</manifest>

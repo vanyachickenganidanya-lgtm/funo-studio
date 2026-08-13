@@ -702,6 +702,63 @@ pub async fn create_minecraft_project(
     result
 }
 
+/// Materializes the localStorage-backed Android editor project into app-private
+/// native storage. Gradle never receives a path supplied by web content.
+#[cfg(target_os = "android")]
+pub async fn materialize_android_minecraft(base: &Path, project: &Project) -> Result<PathBuf, String> {
+    let manifest = project
+        .files
+        .iter()
+        .find(|file| file.path == "funo.toml")
+        .map(|file| file.content.as_str())
+        .ok_or("В Android-проекте отсутствует funo.toml")?;
+    let value = |section: &str, key: &str| -> Option<String> {
+        let mut active = "";
+        for source_line in manifest.lines() {
+            let line = source_line.split('#').next().unwrap_or("").trim();
+            if line.starts_with('[') && line.ends_with(']') {
+                active = line.trim_matches(&['[', ']'][..]).trim();
+            } else if active == section {
+                if let Some((candidate, raw)) = line.split_once('=') {
+                    if candidate.trim() == key {
+                        return Some(raw.trim().trim_matches('"').trim_matches('\'').to_string());
+                    }
+                }
+            }
+        }
+        None
+    };
+    let mod_id = value("minecraft", "mod_id").ok_or("В [minecraft] не указан mod_id")?;
+    let loader = value("minecraft", "loader").ok_or("В [minecraft] не указан loader")?;
+    let minecraft = value("minecraft", "version").ok_or("В [minecraft] не указана version")?;
+    if !Regex::new(r"^[a-z][a-z0-9_]{2,63}$").unwrap().is_match(&mod_id) {
+        return Err("Некорректный mod_id Android-проекта".into());
+    }
+    let profile = resolve_profile(&loader, &minecraft).await?;
+    let root = base.join("minecraft-projects").join(&mod_id);
+    if root.exists() {
+        fs::remove_dir_all(&root).map_err(|error| format!("Не удалось очистить Android-проект: {error}"))?;
+    }
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    create_minecraft_files(&root, project.name.trim(), &mod_id, &profile)?;
+    for file in &project.files {
+        let relative = safe_relative(&file.path)?;
+        let destination = root.join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(destination, &file.content).map_err(|error| format!("Не удалось материализовать {}: {error}", file.path))?;
+    }
+    // A no-daemon Gradle build can stay in the embedded JVM only when the
+    // requested JVM arguments match the JVM created by FunoBuildActivity.
+    fs::write(
+        root.join("gradle.properties"),
+        "org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.country= -Duser.language=en -Duser.variant=\norg.gradle.daemon=false\norg.gradle.parallel=false\norg.gradle.caching=true\n",
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
 fn create_minecraft_files(root: &Path, name: &str, mod_id: &str, profile: &MinecraftProfile) -> Result<(), String> {
     let loader = &profile.loader;
     let minecraft = &profile.minecraft;

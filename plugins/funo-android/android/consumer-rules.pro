@@ -1,0 +1,4 @@
+-keep class net.kdt.pojavlaunch.** { *; }
+-keep class com.oracle.dalvik.** { *; }
+-keep class org.libsdl.app.** { *; }
+-keep class dev.funo.studio.android.** { *; }
