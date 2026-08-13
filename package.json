@@ -12,8 +12,8 @@
     "tauri:build": "node scripts/prepare-sidecar.mjs && tauri build",
     "android:init": "tauri android init --ci",
     "android:dev": "tauri android dev",
-    "android:build": "tauri android build --apk --ci",
-    "android:build:debug": "tauri android build --debug --apk --ci"
+    "android:build": "node scripts/build-android.mjs",
+    "android:build:debug": "node scripts/build-android.mjs --debug"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
