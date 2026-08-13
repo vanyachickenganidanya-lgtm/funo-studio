@@ -111,7 +111,19 @@ async function addJitPackRepository() {
     console.log(`Добавлен JitPack в ${path.relative(root, settings)}`);
   }
   if (!repositoryBlockFound) {
-    throw new Error(`Не удалось найти repositories в: ${existing.map((file) => path.relative(root, file)).join(", ")}`);
+    // Tauri creates tauri.settings.gradle only while its build command is
+    // running. The persistent root settings applies that file first, so a
+    // trailing block safely extends its dependency repositories afterwards.
+    const settings = existing.find((file) => path.basename(file).startsWith("settings.gradle"));
+    if (!settings) {
+      throw new Error(`Не удалось найти repositories в: ${existing.map((file) => path.relative(root, file)).join(", ")}`);
+    }
+    const kotlin = settings.endsWith(".kts");
+    const block = kotlin
+      ? '\n\ndependencyResolutionManagement {\n    repositories {\n        maven(url = "https://jitpack.io")\n    }\n}\n'
+      : '\n\ndependencyResolutionManagement {\n    repositories {\n        maven { url "https://jitpack.io" }\n    }\n}\n';
+    await writeFile(settings, `${await readFile(settings, "utf8")}${block}`);
+    console.log(`Добавлен JitPack в ${path.relative(root, settings)}`);
   }
 }
 
