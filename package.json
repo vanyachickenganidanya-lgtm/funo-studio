@@ -9,7 +9,11 @@
     "preview": "vite preview --host 0.0.0.0",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "node scripts/prepare-sidecar.mjs && tauri build"
+    "tauri:build": "node scripts/prepare-sidecar.mjs && tauri build",
+    "android:init": "tauri android init --ci",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build --apk --ci",
+    "android:build:debug": "tauri android build --debug --apk --ci"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

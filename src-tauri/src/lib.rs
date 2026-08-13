@@ -31,6 +31,28 @@ fn task_error(label: &str, error: impl std::fmt::Display) -> BuildResult {
     }
 }
 
+fn mobile_task_error(feature: &str) -> BuildResult {
+    BuildResult {
+        success: false,
+        stdout: String::new(),
+        stderr: format!(
+            "{feature} требует системные инструменты и доступна в desktop-версии Funo Studio. На Android можно редактировать и проверять исходный код."
+        ),
+        generated_java: String::new(),
+        elapsed_ms: 0,
+        diagnostics: Vec::new(),
+        artifact: None,
+    }
+}
+
+fn desktop_only(feature: &str) -> Result<(), String> {
+    if cfg!(mobile) {
+        Err(format!("{feature} доступна только в desktop-версии Funo Studio."))
+    } else {
+        Ok(())
+    }
+}
+
 #[tauri::command]
 fn ensure_demo_project() -> Result<Project, String> {
     project::ensure_demo_project()
@@ -62,7 +84,43 @@ fn check_source(source: String) -> Vec<Diagnostic> {
 }
 
 #[tauri::command]
+fn transpile_source(source: String, minecraft: bool) -> BuildResult {
+    let started = std::time::Instant::now();
+    let result = if minecraft {
+        compiler::transpile_minecraft_entry(&source)
+    } else {
+        compiler::transpile(&source)
+    };
+    match result {
+        Ok(generated_java) => BuildResult {
+            success: true,
+            stdout: "Исходник проверен без запуска JDK.".into(),
+            stderr: String::new(),
+            generated_java,
+            elapsed_ms: started.elapsed().as_millis(),
+            diagnostics: Vec::new(),
+            artifact: None,
+        },
+        Err(diagnostics) => BuildResult {
+            success: false,
+            stdout: String::new(),
+            stderr: diagnostics
+                .first()
+                .map(|diagnostic| diagnostic.message.clone())
+                .unwrap_or_else(|| "В исходнике есть ошибка".into()),
+            generated_java: String::new(),
+            elapsed_ms: started.elapsed().as_millis(),
+            diagnostics,
+            artifact: None,
+        },
+    }
+}
+
+#[tauri::command]
 async fn compile_and_run(project_root: String, source: String, classpath: Vec<String>) -> BuildResult {
+    if cfg!(mobile) {
+        return mobile_task_error("Запуск JVM");
+    }
     tauri::async_runtime::spawn_blocking(move || compiler::compile_and_run(&project_root, &source, &classpath))
         .await
         .unwrap_or_else(|error| task_error("задачи компилятора", error))
@@ -70,6 +128,9 @@ async fn compile_and_run(project_root: String, source: String, classpath: Vec<St
 
 #[tauri::command]
 async fn build_backend(project_root: String, source: String, target: String, run: bool) -> BuildResult {
+    if cfg!(mobile) {
+        return mobile_task_error("Native backend");
+    }
     tauri::async_runtime::spawn_blocking(move || native::build_backend(&project_root, &source, &target, run))
         .await
         .unwrap_or_else(|error| task_error("native backend", error))
@@ -77,6 +138,9 @@ async fn build_backend(project_root: String, source: String, target: String, run
 
 #[tauri::command]
 async fn build_minecraft(project_root: String, source: String) -> BuildResult {
+    if cfg!(mobile) {
+        return mobile_task_error("Gradle-сборка Minecraft-мода");
+    }
     tauri::async_runtime::spawn_blocking(move || compiler::build_minecraft(&project_root, &source))
         .await
         .unwrap_or_else(|error| task_error("Minecraft-сборки", error))
@@ -89,6 +153,7 @@ async fn fetch_registry(repository: Option<String>) -> Result<RegistryResponse, 
 
 #[tauri::command]
 async fn install_package(project_root: String, package: RegistryPackage, allow_unsafe: bool) -> Result<String, String> {
+    desktop_only("Установка JVM-пакетов")?;
     registry::install_package(&project_root, package, allow_unsafe).await
 }
 
@@ -114,41 +179,49 @@ fn save_settings(value: StudioSettings) -> Result<StudioSettings, String> {
 
 #[tauri::command]
 fn path_status() -> Result<path_setup::PathStatus, String> {
+    desktop_only("PATH и консольная команда funo")?;
     path_setup::status()
 }
 
 #[tauri::command]
 fn install_path() -> Result<path_setup::PathStatus, String> {
+    desktop_only("Установка Funo в PATH")?;
     path_setup::install()
 }
 
 #[tauri::command]
 fn uninstall_path() -> Result<path_setup::PathStatus, String> {
+    desktop_only("Управление PATH")?;
     path_setup::uninstall()
 }
 
 #[tauri::command]
 fn list_instances() -> Result<Vec<MinecraftInstance>, String> {
+    desktop_only("Minecraft Launcher")?;
     launcher::load_instances()
 }
 
 #[tauri::command]
 fn create_instance(name: String, project_root: String, minecraft_version: String, loader: String) -> Result<MinecraftInstance, String> {
+    desktop_only("Minecraft Launcher")?;
     launcher::create_instance(&name, &project_root, &minecraft_version, &loader)
 }
 
 #[tauri::command]
 fn update_instance(instance: MinecraftInstance) -> Result<MinecraftInstance, String> {
+    desktop_only("Minecraft Launcher")?;
     launcher::update_instance(instance)
 }
 
 #[tauri::command]
 fn delete_instance(id: String) -> Result<(), String> {
+    desktop_only("Minecraft Launcher")?;
     launcher::delete_instance(&id)
 }
 
 #[tauri::command]
 async fn launch_instance(id: String) -> Result<String, String> {
+    desktop_only("Запуск Minecraft")?;
     launcher::launch_instance(&id).await
 }
 
@@ -159,6 +232,7 @@ async fn minecraft_toolchain_status(
     loader: String,
     check_updates: bool,
 ) -> Result<MinecraftToolchainStatus, String> {
+    desktop_only("Проверка JDK и Gradle")?;
     toolchains::status(
         &project_root,
         &minecraft_version,
@@ -175,6 +249,7 @@ async fn install_minecraft_toolchain(
     loader: String,
     destination_root: String,
 ) -> Result<MinecraftToolchainStatus, String> {
+    desktop_only("Установка JDK и Gradle")?;
     toolchains::install(
         &project_root,
         &minecraft_version,
@@ -191,21 +266,25 @@ async fn search_modrinth(query: String, loader: String, game_version: String) ->
 
 #[tauri::command]
 async fn install_modrinth(instance_id: String, project_id: String) -> Result<MinecraftInstance, String> {
+    desktop_only("Установка модов в Minecraft Launcher")?;
     modrinth::install(&instance_id, &project_id).await
 }
 
 #[tauri::command]
 fn remove_instance_mod(instance_id: String, project_id: String) -> Result<MinecraftInstance, String> {
+    desktop_only("Управление модами Minecraft Launcher")?;
     modrinth::remove(&instance_id, &project_id)
 }
 
 #[tauri::command]
 fn create_plugin(parent: String, name: String, language: String, kind: String) -> Result<PluginProject, String> {
+    desktop_only("Создание нативного плагина")?;
     plugins::create_plugin(&parent, &name, &language, &kind)
 }
 
 #[tauri::command]
 async fn check_plugin(root: String) -> Result<PluginCheck, String> {
+    desktop_only("Проверка нативного плагина")?;
     tauri::async_runtime::spawn_blocking(move || plugins::check_plugin(&root))
         .await
         .map_err(|error| error.to_string())?
@@ -213,31 +292,37 @@ async fn check_plugin(root: String) -> Result<PluginCheck, String> {
 
 #[tauri::command]
 fn install_plugin(root: String) -> Result<PluginProject, String> {
+    desktop_only("Установка нативного плагина")?;
     plugins::install_plugin(&root)
 }
 
 #[tauri::command]
 fn list_plugins() -> Result<Vec<PluginProject>, String> {
+    desktop_only("Plugin SDK")?;
     plugins::list_plugins()
 }
 
 #[tauri::command]
 async fn begin_microsoft_auth() -> Result<MicrosoftAuthChallenge, String> {
+    desktop_only("Microsoft-авторизация Minecraft Launcher")?;
     auth::begin().await
 }
 
 #[tauri::command]
 async fn complete_microsoft_auth(device_code: String) -> Result<MinecraftAccount, String> {
+    desktop_only("Microsoft-авторизация Minecraft Launcher")?;
     auth::complete(&device_code).await
 }
 
 #[tauri::command]
 fn current_microsoft_account() -> Result<Option<MinecraftAccount>, String> {
+    desktop_only("Microsoft-авторизация Minecraft Launcher")?;
     auth::current()
 }
 
 #[tauri::command]
 fn logout_microsoft() -> Result<(), String> {
+    desktop_only("Microsoft-авторизация Minecraft Launcher")?;
     auth::logout()
 }
 
@@ -251,6 +336,7 @@ pub fn run() {
             set_project_path_hidden,
             reload_project,
             check_source,
+            transpile_source,
             compile_and_run,
             build_backend,
             build_minecraft,

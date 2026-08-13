@@ -3,7 +3,7 @@ import * as monaco from 'monaco-editor';
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import { registerFunoLanguage, setDiagnostics } from './funo-language';
 import {
-  ensureProject, saveFile, checkCode, runCode, buildMinecraft, fetchRegistry, installPackage,
+  ensureProject, saveFile, checkCode, transpileSource, runCode, buildMinecraft, fetchRegistry, installPackage,
   fetchMinecraftVersions, createMinecraftProject, minecraftToolchainStatus, installMinecraftToolchain,
   createFolder, reloadProject, setPathHidden,
   loadSettings, saveSettings, getPathStatus, installPath, uninstallPath, runBackend,
@@ -13,7 +13,7 @@ import {
   beginMicrosoftAuth, completeMicrosoftAuth, currentMicrosoftAccount, logoutMicrosoft,
   type Project, type Diagnostic, type RegistryPackage, type MinecraftVersion, type StudioSettings,
   type MinecraftInstance, type MinecraftToolchainStatus, type ModrinthProject, type PluginProject,
-  type MinecraftAccount
+  type MinecraftAccount, runtimePlatform, desktopToolsAvailable
 } from './api';
 
 (self as any).MonacoEnvironment = { getWorker: () => new EditorWorker() };
@@ -40,6 +40,10 @@ const icon = (name: string) => {
   return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.files}</svg>`;
 };
 
+const compactLayout = () => window.matchMedia('(max-width: 650px)').matches;
+document.body.classList.toggle('android-app', runtimePlatform.android);
+if (runtimePlatform.android) document.body.classList.add('panel-collapsed');
+
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
 <div class="shell">
@@ -47,6 +51,7 @@ app.innerHTML = `
     <div class="app-mark">f;</div>
     <nav class="menu"><button>Файл</button><button>Правка</button><button>Выделение</button><button>Вид</button><button>Запуск</button><button>Помощь</button></nav>
     <button class="command-center" id="commandCenter">${icon('search')} <span>Мой первый проект</span><kbd>Ctrl K</kbd></button>
+    <span class="android-chip">ANDROID</span>
     <div class="title-actions">
       <div class="mode-toggle"><button id="noviceMode" class="active">Новичок</button><button id="proMode">Профи</button></div>
     </div>
@@ -64,9 +69,10 @@ app.innerHTML = `
       <button class="activity bottom" data-view="settings" title="Настройки">${icon('gear')}</button>
     </nav>
     <aside class="sidebar">
-      <div class="sidebar-title"><span id="sidebarTitle">ПРОВОДНИК</span><div><button class="tiny" id="newFile" title="Новый файл">${icon('plus')}</button><button class="tiny" id="newFolder" title="Новая папка">▣</button><button class="tiny" id="refreshView">${icon('refresh')}</button></div></div>
+      <div class="sidebar-title"><span id="sidebarTitle">ПРОВОДНИК</span><div><button class="tiny" id="newFile" title="Новый файл">${icon('plus')}</button><button class="tiny" id="newFolder" title="Новая папка">▣</button><button class="tiny" id="refreshView">${icon('refresh')}</button><button class="tiny sidebar-close" id="sidebarClose" title="Закрыть">${icon('close')}</button></div></div>
       <div class="sidebar-content" id="sidebarContent"></div>
     </aside>
+    <button class="drawer-scrim" id="drawerScrim" aria-label="Закрыть боковую панель"></button>
     <section class="editor-group">
       <div class="editor-tabs"><button class="editor-tab active"><span class="fun-icon">fn</span><span id="tabTitle">main.fun</span><span class="dirty" id="dirtyDot"></span>${icon('close')}</button><div class="editor-actions"><button id="markdownPreview" class="hidden" title="Предпросмотр Markdown">${icon('book')}</button><button id="showJava" title="Показать сгенерированный код">${icon('java')}</button><button id="topRun" title="Запустить Ctrl+Enter">${icon('play')}</button></div></div>
       <div class="breadcrumbs"><span id="projectCrumb">Мой первый проект</span><b>›</b><span id="fileCrumb">main.fun</span><b>›</b><span id="symbolCrumb">fun main()</span></div>
@@ -81,7 +87,7 @@ app.innerHTML = `
           <button class="panel-tab active" data-panel="terminal">ТЕРМИНАЛ</button>
           <button class="panel-tab" data-panel="problems">ПРОБЛЕМЫ <span id="problemCount">0</span></button>
           <button class="panel-tab" data-panel="output">ВЫХОД</button>
-          <div class="panel-actions"><button id="clearPanel">${icon('close')}</button></div>
+          <div class="panel-actions"><button id="collapsePanel" title="Свернуть или развернуть панель">⌃</button><button id="clearPanel" title="Очистить">${icon('close')}</button></div>
         </div>
         <pre class="panel-body" id="panelBody"><span class="muted">Funo готов. Нажмите Ctrl+Enter, чтобы запустить программу.</span></pre>
       </div>
@@ -117,16 +123,17 @@ monaco.editor.defineTheme('funo-vscode', {
   }
 });
 
+const touchEditor = runtimePlatform.mobile || compactLayout();
 const editor = monaco.editor.create(document.getElementById('editor')!, {
   value: '', language: 'funo', theme: 'funo-vscode', automaticLayout: true,
-  fontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, monospace', fontSize: 14,
-  lineHeight: 22, fontLigatures: true, minimap: { enabled: true, scale: 1 },
-  smoothScrolling: true, cursorSmoothCaretAnimation: 'on', padding: { top: 10 },
+  fontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, monospace', fontSize: touchEditor ? 15 : 14,
+  lineHeight: touchEditor ? 24 : 22, fontLigatures: true, minimap: { enabled: !touchEditor, scale: 1 },
+  smoothScrolling: true, cursorSmoothCaretAnimation: 'on', padding: { top: 10, bottom: touchEditor ? 28 : 0 },
   renderWhitespace: 'selection', bracketPairColorization: { enabled: true },
-  guides: { bracketPairs: true, indentation: true }, stickyScroll: { enabled: true },
+  guides: { bracketPairs: true, indentation: true }, stickyScroll: { enabled: !touchEditor },
   suggest: { showWords: false, preview: true }, quickSuggestions: { other: true, comments: false, strings: false },
   inlineSuggest: { enabled: true }, lightbulb: { enabled: monaco.editor.ShowLightbulbIconMode.OnCode },
-  wordWrap: 'off', tabSize: 4, insertSpaces: true
+  wordWrap: touchEditor ? 'on' : 'off', tabSize: 4, insertSpaces: true
 });
 
 let project: Project;
@@ -156,7 +163,7 @@ function setMode(next: 'novice' | 'pro') {
   document.body.classList.toggle('pro-mode', next === 'pro');
   document.getElementById('noviceMode')!.classList.toggle('active', next === 'novice');
   document.getElementById('proMode')!.classList.toggle('active', next === 'pro');
-  editor.updateOptions({ minimap: { enabled: next === 'pro' }, inlayHints: { enabled: next === 'pro' ? 'on' : 'off' } });
+  editor.updateOptions({ minimap: { enabled: !touchEditor && next === 'pro' }, inlayHints: { enabled: next === 'pro' ? 'on' : 'off' } });
   if (settings) { settings.beginner = next === 'novice'; void saveSettings(settings); }
   if (diagnostics.length) renderFriendlyError(diagnostics[0]);
 }
@@ -287,7 +294,10 @@ function renderExplorer() {
     <div class="file-tree">${renderNode(root)}</div>
     ${hidden ? `<div class="outline"><div class="section-line">СКРЫТО (${project.hidden_paths.length})</div>${hidden}</div>` : ''}
     <div class="outline"><div class="section-line">ПОДСКАЗКА</div><p class="side-help tree-tip">Наведите на файл или папку и нажмите ○, чтобы убрать их из проводника без удаления.</p></div>`;
-  document.querySelectorAll<HTMLElement>('.file-row').forEach(element => element.onclick = () => openFile(element.dataset.path!));
+  document.querySelectorAll<HTMLElement>('.file-row').forEach(element => element.onclick = () => {
+    openFile(element.dataset.path!);
+    if (compactLayout()) document.body.classList.remove('sidebar-open');
+  });
   document.querySelectorAll<HTMLElement>('.tree-hide').forEach(element => element.onclick = async event => {
     event.stopPropagation();
     try { project = await setPathHidden(project.root, element.dataset.hide!, true); renderExplorer(); toast('Путь скрыт. Файл остался на диске.'); }
@@ -305,13 +315,18 @@ function renderSearch() {
     const q = (document.getElementById('globalSearch') as HTMLInputElement).value;
     const hits = project.files.flatMap(f => f.content.split('\n').map((line, i) => ({ f, line, i })).filter(x => q && x.line.toLowerCase().includes(q.toLowerCase())));
     document.getElementById('searchResults')!.innerHTML = hits.map(h => `<button class="search-hit" data-path="${h.f.path}" data-line="${h.i + 1}"><b>${h.f.path}:${h.i + 1}</b><span>${h.line.trim()}</span></button>`).join('') || '<p class="side-help">Совпадений пока нет.</p>';
-    document.querySelectorAll<HTMLElement>('.search-hit').forEach(x => x.onclick = () => { openFile(x.dataset.path!); editor.revealLineInCenter(Number(x.dataset.line)); editor.setPosition({ lineNumber: Number(x.dataset.line), column: 1 }); });
+    document.querySelectorAll<HTMLElement>('.search-hit').forEach(x => x.onclick = () => { openFile(x.dataset.path!); editor.revealLineInCenter(Number(x.dataset.line)); editor.setPosition({ lineNumber: Number(x.dataset.line), column: 1 }); if (compactLayout()) document.body.classList.remove('sidebar-open'); });
   };
   document.getElementById('doSearch')!.onclick = run;
   (document.getElementById('globalSearch') as HTMLInputElement).onkeydown = e => { if (e.key === 'Enter') run(); };
 }
 
 function renderRunSide() {
+  if (!desktopToolsAvailable) {
+    document.getElementById('sidebarContent')!.innerHTML = `<div class="run-side"><button class="primary full" id="runSideButton">${icon('check')} Проверить код</button><p class="side-help">Android-версия проверяет синтаксис локально и показывает созданный Java-код. Запуск JVM, Gradle и системных компиляторов оставлен desktop-версии.</p><div class="mobile-capabilities"><span>✓ Редактор и автосохранение</span><span>✓ Проверка Funo</span><span>✓ Предпросмотр Java</span><span>— Запуск и сборка</span></div></div>`;
+    document.getElementById('runSideButton')!.onclick = () => { document.body.classList.remove('sidebar-open'); void execute(); };
+    return;
+  }
   document.getElementById('sidebarContent')!.innerHTML = `<div class="run-side"><button class="primary full" id="runSideButton">${icon('play')} Запустить Funo</button><p class="side-help">Выберите JVM или один из нативных backend-ов. Необходимый компилятор должен быть установлен в системе.</p><div class="side-section-title">КОНФИГУРАЦИЯ</div><label>Backend<select id="backendSelect"><option value="jvm">JVM / Java</option><option value="cpp">C++ 17</option><option value="rust">Rust</option><option value="javascript">JavaScript</option><option value="python">Python</option></select></label><label>Режим<select id="backendMode"><option value="run">Собрать и запустить</option><option value="build">Только собрать</option></select></label><label class="check"><input type="checkbox" checked> Остановиться при ошибке</label><div id="backendTargets" class="backend-targets"></div></div>`;
   const select = document.getElementById('backendSelect') as HTMLSelectElement;
   select.value = compilerBackend;
@@ -330,14 +345,16 @@ async function renderPackages() {
       <a href="${result.source}" target="_blank" rel="noreferrer">Открыть ваш GitHub ↗</a>
     </div>`;
   showSurface(`<div class="surface-page packages-page">
-    <div class="page-hero"><div><span class="overline">FUNO PACK</span><h1>Библиотеки</h1><p>Проверенные пакеты из вашего GitHub, Java .jar и инструменты для Minecraft.</p></div><div class="hero-actions"><button class="primary" id="addOwnPlugin">+ Добавить своё</button><button class="secondary" id="refreshRegistry">${icon('refresh')} Обновить</button></div></div>
+    <div class="page-hero"><div><span class="overline">FUNO PACK</span><h1>Библиотеки</h1><p>Проверенные пакеты из вашего GitHub, Java .jar и инструменты для Minecraft.</p></div><div class="hero-actions">${desktopToolsAvailable ? '<button class="primary" id="addOwnPlugin">+ Добавить своё</button>' : ''}<button class="secondary" id="refreshRegistry">${icon('refresh')} Обновить</button></div></div>
+    ${desktopToolsAvailable ? '' : '<div class="mobile-notice"><b>Режим каталога</b><span>На Android можно смотреть и искать пакеты. Установка .jar и нативных плагинов выполняется в desktop-версии.</span></div>'}
     <div class="registry-source"><span class="verified-mark">${icon('check')}</span><div><b>Официальный источник</b><code>${result.source}</code></div><span class="registry-state ${result.status}">${result.status === 'ready' ? 'доступен' : result.status === 'empty' ? 'ждёт index.json' : 'нет связи'}</span></div>
-    <div class="package-toolbar"><div class="surface-search">${icon('search')}<input id="packageSearch" placeholder="Поиск пакета или Java-библиотеки"></div><button class="secondary" id="addJar">+ Добавить .jar / Maven</button></div>
+    <div class="package-toolbar"><div class="surface-search">${icon('search')}<input id="packageSearch" placeholder="Поиск пакета или Java-библиотеки"></div>${desktopToolsAvailable ? '<button class="secondary" id="addJar">+ Добавить .jar / Maven</button>' : ''}</div>
     <div class="package-grid" id="packageGrid">${cards}</div>
     <section class="trust-info"><h3>Как Funo проверяет пакет</h3><div><span>1</span> HTTPS с GitHub</div><div><span>2</span> SHA-256 совпадает</div><div><span>3</span> Версия записывается в funo.lock</div></section>
   </div>`);
   document.getElementById('refreshRegistry')!.onclick = () => void renderPackages();
-  document.getElementById('addOwnPlugin')!.onclick = () => void renderPlugins();
+  const addOwnPlugin = document.getElementById('addOwnPlugin');
+  if (addOwnPlugin) addOwnPlugin.onclick = () => void renderPlugins();
   document.getElementById('packageSearch')!.oninput = e => {
     const q = (e.target as HTMLInputElement).value.toLowerCase();
     document.querySelectorAll<HTMLElement>('.package-card').forEach(c => c.classList.toggle('hidden', !c.dataset.search!.includes(q)));
@@ -347,10 +364,12 @@ async function renderPackages() {
     try { const msg = await installPackage(project.root, pkg, false); toast(msg); btn.textContent = 'Установлено'; }
     catch (err) { toast(String(err), 'warn'); }
   });
-  document.getElementById('addJar')!.onclick = () => openModal('Java-библиотека', `<p>Funo поддерживает обычные Java-библиотеки. Укажите Maven-координату:</p><label class="field">Maven ID<input placeholder="com.google.code.gson:gson:2.11.0"></label><label class="field">или локальный файл<input type="file" accept=".jar"></label><div class="modal-actions"><button class="secondary" data-close>Отмена</button><button class="primary" id="confirmJar">Добавить</button></div>`);
+  const addJar = document.getElementById('addJar');
+  if (addJar) addJar.onclick = () => openModal('Java-библиотека', `<p>Funo поддерживает обычные Java-библиотеки. Укажите Maven-координату:</p><label class="field">Maven ID<input placeholder="com.google.code.gson:gson:2.11.0"></label><label class="field">или локальный файл<input type="file" accept=".jar"></label><div class="modal-actions"><button class="secondary" data-close>Отмена</button><button class="primary" id="confirmJar">Добавить</button></div>`);
 }
 
 async function renderPlugins() {
+  if (!desktopToolsAvailable) { toast('Plugin SDK доступен в desktop-версии Funo Studio.', 'warn'); void renderPackages(); return; }
   showSurface(`<div class="loading">${icon('refresh')} Загружаю пользовательские плагины…</div>`);
   const plugins = await listPlugins().catch(() => []);
   showSurface(`<div class="surface-page plugins-page"><div class="page-hero"><div><span class="overline">PLUGIN SDK</span><h1>Добавить своё</h1><p>Создайте обычный Git-репозиторий плагина, редактируйте его исходники и запускайте тесты прямо из Studio.</p></div></div>
@@ -375,7 +394,7 @@ async function renderPlugins() {
 }
 
 function packageCard(p: RegistryPackage) {
-  return `<article class="package-card" data-search="${`${p.name} ${p.id} ${p.description}`.toLowerCase()}"><div class="package-icon">${p.kind === 'minecraft' ? icon('cube') : p.kind === 'java' ? icon('java') : icon('package')}</div><div class="package-main"><h3>${p.name}${p.verified ? `<span class="verified" title="SHA-256 указан">${icon('check')}</span>` : ''}</h3><code>${p.id}@${p.version}</code><p>${p.description}</p><footer><span>${p.kind}</span><button class="primary small install-package" data-id="${p.id}">Установить</button></footer></div></article>`;
+  return `<article class="package-card" data-search="${`${p.name} ${p.id} ${p.description}`.toLowerCase()}"><div class="package-icon">${p.kind === 'minecraft' ? icon('cube') : p.kind === 'java' ? icon('java') : icon('package')}</div><div class="package-main"><h3>${p.name}${p.verified ? `<span class="verified" title="SHA-256 указан">${icon('check')}</span>` : ''}</h3><code>${p.id}@${p.version}</code><p>${p.description}</p><footer><span>${p.kind}</span><button class="${desktopToolsAvailable ? 'primary' : 'secondary'} small install-package" data-id="${p.id}" ${desktopToolsAvailable ? '' : 'disabled'}>${desktopToolsAvailable ? 'Установить' : 'Desktop'}</button></footer></div></article>`;
 }
 
 function formatBytes(bytes: number) {
@@ -399,6 +418,7 @@ async function renderMinecraftToolchains(
   checkUpdates = false,
   returnView: 'minecraft' | 'settings' = 'minecraft'
 ) {
+  if (!desktopToolsAvailable) { toast('JDK и Gradle настраиваются в desktop-версии.', 'warn'); renderMinecraft(); return; }
   const goBack = () => launcherInstanceId
     ? void renderLauncher(launcherInstanceId)
     : returnView === 'settings' ? void renderSettings() : renderMinecraft();
@@ -453,7 +473,8 @@ async function renderMinecraftToolchains(
 }
 
 function renderMinecraft() {
-  showSurface(`<div class="surface-page minecraft-page"><div class="page-hero"><div><span class="overline">MINECRAFT + FUNO</span><h1>Новый мод без сложного Java-кода</h1><p>Создавайте моды, запускайте изолированные сборки и устанавливайте совместимые моды с Modrinth.</p></div><div class="hero-actions"><button class="secondary" id="openToolchains">JDK и Gradle</button><button class="primary" id="openLauncher">${icon('play')} Лаунчер и сборки</button><div class="voxel">F</div></div></div>
+  showSurface(`<div class="surface-page minecraft-page"><div class="page-hero"><div><span class="overline">MINECRAFT + FUNO</span><h1>Новый мод без сложного Java-кода</h1><p>${desktopToolsAvailable ? 'Создавайте моды, запускайте изолированные сборки и устанавливайте совместимые моды с Modrinth.' : 'Создавайте и редактируйте исходники мода на телефоне по официальному каталогу версий.'}</p></div><div class="hero-actions">${desktopToolsAvailable ? `<button class="secondary" id="openToolchains">JDK и Gradle</button><button class="primary" id="openLauncher">${icon('play')} Лаунчер и сборки</button>` : ''}<div class="voxel">F</div></div></div>
+    ${desktopToolsAvailable ? '' : '<div class="mobile-notice"><b>Мобильный проект</b><span>Исходники и проверка доступны в APK. Готовый JAR собирается через JDK/Gradle в desktop-версии или CI.</span></div>'}
     <div class="wizard-grid"><section class="wizard"><h2>Создать проект</h2><label class="field">Название мода<input id="modName" value="Мой первый мод"></label><label class="field">ID мода<input id="modId" value="my_first_mod" pattern="[a-z0-9_]+"></label><label class="field">Загрузчик<div class="loader-options"><button class="loader active" data-loader="fabric"><b>Fabric</b><span>Лёгкий и быстрый</span></button><button class="loader" data-loader="forge"><b>Forge</b><span>Большая экосистема</span></button><button class="loader" data-loader="neoforge"><b>NeoForge</b><span>Современный Forge</span></button></div></label><label class="field">Версия Minecraft<select id="minecraftVersion" disabled><option>Загрузка версий…</option></select><small id="minecraftVersionHint">Получаем официальный каталог загрузчика</small></label><button class="primary big" id="createMod" disabled>${icon('cube')} Создать Minecraft-мод</button></section>
     <section class="code-preview"><span>main.fun · <b id="minecraftCode">Minecraft</b> · Funo API</span><pre><i>use</i> minecraft.<b id="loaderCode">fabric</b>
 
@@ -468,7 +489,7 @@ function renderMinecraft() {
     <i>on</i> block_break(player, block) {
         <em>log</em>(<s>f"{player} сломал {block}"</s>)
     }
-}</pre><div class="what-created"><b>Funo создаст:</b><span>✓ Gradle + manifest выбранной версии</span><span>✓ события Fabric / Forge / NeoForge</span><span>✓ правильную версию Java</span><span>✓ готовый JAR мода</span></div></section></div>
+}</pre><div class="what-created"><b>Funo создаст:</b><span>✓ локальный main.fun</span><span>✓ события Fabric / Forge / NeoForge</span><span>✓ manifest с версией Java</span><span>${desktopToolsAvailable ? '✓ готовый JAR мода' : '→ JAR собирается на компьютере'}</span></div></section></div>
     <div class="learn-strip"><div>${icon('spark')}</div><p><b>Свои команды Funo без сложного Java-кода.</b><br>Доступны <code>log</code>, <code>broadcast</code>, <code>tell</code>, <code>give</code>, <code>actionbar</code> и <code>run_command</code>.</p></div>
   </div>`);
   let loader = 'fabric';
@@ -477,8 +498,10 @@ function renderMinecraft() {
   const versionSelect = document.getElementById('minecraftVersion') as HTMLSelectElement;
   const versionHint = document.getElementById('minecraftVersionHint')!;
   const createButton = document.getElementById('createMod') as HTMLButtonElement;
-  document.getElementById('openLauncher')!.onclick = () => void renderLauncher();
-  document.getElementById('openToolchains')!.onclick = () => {
+  const openLauncher = document.getElementById('openLauncher');
+  if (openLauncher) openLauncher.onclick = () => void renderLauncher();
+  const openToolchains = document.getElementById('openToolchains');
+  if (openToolchains) openToolchains.onclick = () => {
     const selectedVersion = versions.find(version => version.id === versionSelect.value)?.id || minecraftRequirements().version;
     void renderMinecraftToolchains(project.root, selectedVersion, loader);
   };
@@ -547,6 +570,7 @@ function renderMinecraft() {
 }
 
 async function renderLauncher(selectedId?: string) {
+  if (!desktopToolsAvailable) { toast('Minecraft Launcher доступен в desktop-версии.', 'warn'); renderMinecraft(); return; }
   [instances, account] = await Promise.all([listInstances(), currentMicrosoftAccount().catch(() => null)]);
   const selected = instances.find(instance => instance.id === selectedId) || instances[0];
   showSurface(`<div class="surface-page launcher-page"><div class="page-hero"><div><span class="overline">FUNO LAUNCHER</span><h1>Независимые сборки</h1><p>У каждой сборки отдельные <code>mods</code>, <code>config</code>, аргументы JVM и каталог игры.</p></div><div class="hero-actions"><button class="secondary" id="backToModWizard">← Мастер модов</button>${selected ? '<button class="secondary" id="launcherToolchains">JDK и Gradle</button>' : ''}<button class="${account ? 'secondary' : 'primary'}" id="accountButton">${account ? `● ${escapeHtml(account.username)}` : 'Войти через Microsoft'}</button></div></div>
@@ -621,6 +645,7 @@ async function renderLauncher(selectedId?: string) {
 }
 
 async function handleMicrosoftAccount() {
+  if (!desktopToolsAvailable) { toast('Авторизация лаунчера доступна в desktop-версии.', 'warn'); return; }
   if (account) {
     openModal('Аккаунт Minecraft', `<p>Вы вошли как <b>${escapeHtml(account.username)}</b>.</p><div class="modal-actions"><button class="secondary" data-close>Закрыть</button><button class="danger" id="logoutMicrosoft">Выйти</button></div>`);
     document.getElementById('logoutMicrosoft')!.onclick = async () => { await logoutMicrosoft(); account = null; document.getElementById('modalLayer')!.classList.add('hidden'); await renderLauncher(); };
@@ -685,10 +710,17 @@ function renderLessons() {
 }
 
 async function renderSettings() {
-  showSurface(`<div class="surface-page settings-page"><div class="page-hero"><div><span class="overline">НАСТРОЙКИ</span><h1>Funo Studio</h1><p>Редактор хранит исходники локально. Код не отправляется в облако.</p></div></div><div class="settings-list"><section><h2>Редактор и обучение</h2><label><span><b>Режим по умолчанию</b><small>В режиме новичка подсказки подробнее</small></span><select id="defaultMode"><option value="novice">Я новичок</option><option value="pro">Профессиональный</option></select></label><label><span><b>Интерактивное обучение</b><small>Продолжить с сохранённого шага</small></span><button class="secondary" id="openLearning">Открыть путь</button></label></section><section><h2>Компилятор</h2><label><span><b>Backend по умолчанию</b><small>JVM, C++ 17, Rust, JavaScript или Python</small></span><select id="defaultBackend"><option value="jvm">JVM / Java</option><option value="cpp">C++ 17</option><option value="rust">Rust</option><option value="javascript">JavaScript</option><option value="python">Python</option></select></label><div class="cli-card"><div>${icon('terminal')}</div><span><b>Funo CLI и PATH</b><small id="pathDescription">Проверяю пользовательский PATH…</small><code id="pathLauncher"></code></span><button class="primary" id="togglePath" disabled>Проверка…</button></div></section><section><h2>Minecraft и Microsoft</h2><label><span><b>Microsoft Entra Client ID</b><small>Public client с разрешённым device-code flow. Секрет не нужен и не хранится.</small></span><input id="microsoftClientId" value="${escapeHtml(settings.microsoft_client_id)}" placeholder="00000000-0000-0000-0000-000000000000"></label><label><span><b>Аккаунт</b><small>${account ? `Подключён: ${escapeHtml(account.username)}` : 'Не подключён'}</small></span><button class="secondary" id="settingsAccount">${account ? 'Управление' : 'Войти'}</button></label><div class="cli-card compact"><div>${icon('java')}</div><span><b>JDK и Gradle для Minecraft</b><small>Проверка версий, обновления и установка с обязательным резервом 30 ГиБ</small></span><button class="secondary" id="settingsToolchains">Открыть</button></div></section><section><h2>Пакеты</h2><label><span><b>Официальный GitHub</b><small>Индекс проверенных библиотек</small></span><input value="vanyachickenganidanya-lgtm/funo_libsOFFICAL" readonly></label><div class="cli-card compact"><div>${icon('package')}</div><span><b>Свои плагины</b><small>Rust, C++ 17, TypeScript, JavaScript и Python</small></span><button class="secondary" id="settingsPlugins">Открыть SDK</button></div></section></div></div>`);
-  const modeSelect = document.getElementById('defaultMode') as HTMLSelectElement; modeSelect.value = settings.beginner ? 'novice' : 'pro';
-  const backendSelect = document.getElementById('defaultBackend') as HTMLSelectElement; backendSelect.value = compilerBackend;
+  const desktopSections = `<section><h2>Компилятор</h2><label><span><b>Backend по умолчанию</b><small>JVM, C++ 17, Rust, JavaScript или Python</small></span><select id="defaultBackend"><option value="jvm">JVM / Java</option><option value="cpp">C++ 17</option><option value="rust">Rust</option><option value="javascript">JavaScript</option><option value="python">Python</option></select></label><div class="cli-card"><div>${icon('terminal')}</div><span><b>Funo CLI и PATH</b><small id="pathDescription">Проверяю пользовательский PATH…</small><code id="pathLauncher"></code></span><button class="primary" id="togglePath" disabled>Проверка…</button></div></section><section><h2>Minecraft и Microsoft</h2><label><span><b>Microsoft Entra Client ID</b><small>Public client с разрешённым device-code flow. Секрет не нужен и не хранится.</small></span><input id="microsoftClientId" value="${escapeHtml(settings.microsoft_client_id)}" placeholder="00000000-0000-0000-0000-000000000000"></label><label><span><b>Аккаунт</b><small>${account ? `Подключён: ${escapeHtml(account.username)}` : 'Не подключён'}</small></span><button class="secondary" id="settingsAccount">${account ? 'Управление' : 'Войти'}</button></label><div class="cli-card compact"><div>${icon('java')}</div><span><b>JDK и Gradle для Minecraft</b><small>Проверка версий, обновления и установка с обязательным резервом 30 ГиБ</small></span><button class="secondary" id="settingsToolchains">Открыть</button></div></section>`;
+  const mobileSections = `<section><h2>Android APK</h2><div class="mobile-notice settings-mobile"><b>Локальная мобильная Studio</b><span>Проект, настройки и прогресс обучения сохраняются на этом устройстве. Синтаксис проверяет встроенный Rust-компилятор Funo.</span></div><div class="mobile-capability-grid"><article>${icon('check')}<span><b>Доступно</b><small>Редактор, файлы проекта, проверка, Java-предпросмотр, вики и каталоги</small></span></article><article>${icon('terminal')}<span><b>Только desktop</b><small>JDK, Gradle, PATH, запуск процессов, Minecraft Launcher и Plugin SDK</small></span></article></div></section>`;
+  showSurface(`<div class="surface-page settings-page"><div class="page-hero"><div><span class="overline">НАСТРОЙКИ</span><h1>Funo Studio</h1><p>Редактор хранит исходники локально. Код не отправляется в облако.</p></div>${runtimePlatform.android ? '<span class="platform-pill">Android</span>' : ''}</div><div class="settings-list"><section><h2>Редактор и обучение</h2><label><span><b>Режим по умолчанию</b><small>В режиме новичка подсказки подробнее</small></span><select id="defaultMode"><option value="novice">Я новичок</option><option value="pro">Профессиональный</option></select></label><label><span><b>Интерактивное обучение</b><small>Продолжить с сохранённого шага</small></span><button class="secondary" id="openLearning">Открыть путь</button></label></section>${desktopToolsAvailable ? desktopSections : mobileSections}<section><h2>Пакеты</h2><label><span><b>Официальный GitHub</b><small>Индекс проверенных библиотек${desktopToolsAvailable ? '' : ' · просмотр на Android'}</small></span><input value="vanyachickenganidanya-lgtm/funo_libsOFFICAL" readonly></label>${desktopToolsAvailable ? `<div class="cli-card compact"><div>${icon('package')}</div><span><b>Свои плагины</b><small>Rust, C++ 17, TypeScript, JavaScript и Python</small></span><button class="secondary" id="settingsPlugins">Открыть SDK</button></div>` : ''}</section></div></div>`);
+  const modeSelect = document.getElementById('defaultMode') as HTMLSelectElement;
+  modeSelect.value = settings.beginner ? 'novice' : 'pro';
   modeSelect.onchange = () => setMode(modeSelect.value as 'novice' | 'pro');
+  document.getElementById('openLearning')!.onclick = () => { selectView('lessons'); renderLessons(); };
+  if (!desktopToolsAvailable) return;
+
+  const backendSelect = document.getElementById('defaultBackend') as HTMLSelectElement;
+  backendSelect.value = compilerBackend;
   backendSelect.onchange = () => { compilerBackend = backendSelect.value; settings.compiler_backend = compilerBackend; document.getElementById('backendStatus')!.textContent = compilerBackend.toUpperCase(); void saveSettings(settings); };
   (document.getElementById('microsoftClientId') as HTMLInputElement).onchange = event => { settings.microsoft_client_id = (event.target as HTMLInputElement).value.trim(); void saveSettings(settings); };
   document.getElementById('settingsAccount')!.onclick = () => void handleMicrosoftAccount();
@@ -697,7 +729,6 @@ async function renderSettings() {
     void renderMinecraftToolchains(project.root, requirements.version, requirements.loader, undefined, false, 'settings');
   };
   document.getElementById('settingsPlugins')!.onclick = () => void renderPlugins();
-  document.getElementById('openLearning')!.onclick = () => { selectView('lessons'); renderLessons(); };
   try {
     const status = await getPathStatus();
     const button = document.getElementById('togglePath') as HTMLButtonElement;
@@ -714,6 +745,7 @@ function showSurface(html: string) {
 function hideSurface() { const s = document.getElementById('surface')!; s.classList.add('hidden'); s.innerHTML = ''; }
 
 function selectView(view: string) {
+  const closeCurrentDrawer = compactLayout() && currentView === view && document.body.classList.contains('sidebar-open');
   currentView = view;
   document.querySelectorAll<HTMLElement>('.activity').forEach(x => x.classList.toggle('active', x.dataset.view === view));
   const title = document.getElementById('sidebarTitle')!;
@@ -728,9 +760,19 @@ function selectView(view: string) {
   else if (view === 'lessons') { title.textContent = 'ПУТЬ НОВИЧКА'; document.getElementById('sidebarContent')!.innerHTML = `<div class="side-info">${icon('spark')}<b>Учимся практикой</b><p>Пять программ от первого вывода до мини-проекта.</p></div>`; renderLessons(); }
   else if (view === 'wiki') { title.textContent = 'ВИКИ FUNO'; document.getElementById('sidebarContent')!.innerHTML = `<div class="side-info">${icon('book')}<b>Документация</b><p>От первой функции до своего пакета.</p></div>`; renderWiki(); }
   else if (view === 'settings') { title.textContent = 'УПРАВЛЕНИЕ'; document.getElementById('sidebarContent')!.innerHTML = ''; void renderSettings(); }
+  if (compactLayout()) {
+    const drawerView = view === 'explorer' || view === 'search' || view === 'run';
+    document.body.classList.toggle('sidebar-open', drawerView && !closeCurrentDrawer);
+  }
 }
 
 document.querySelectorAll<HTMLElement>('.activity').forEach(x => x.onclick = () => selectView(x.dataset.view!));
+document.getElementById('sidebarClose')!.onclick = () => document.body.classList.remove('sidebar-open');
+document.getElementById('drawerScrim')!.onclick = () => document.body.classList.remove('sidebar-open');
+window.matchMedia('(max-width: 650px)').addEventListener('change', event => {
+  if (!event.matches) document.body.classList.remove('sidebar-open', 'panel-collapsed');
+  editor.layout();
+});
 
 document.getElementById('newFile')!.onclick = async () => {
   const name = prompt('Путь нового файла', 'src/feature.fun')?.trim(); if (!name) return;
@@ -755,6 +797,7 @@ document.getElementById('refreshView')!.onclick = async () => {
 
 editor.onDidChangeModelContent(() => {
   if (!editor.getModel()) return;
+  (window as any).__lastJava = '';
   const file = project?.files.find(f => f.path === currentPath); if (file) file.content = editor.getValue();
   updateMarkdownPreview();
   document.getElementById('dirtyDot')!.classList.add('on');
@@ -803,10 +846,27 @@ function escapeHtml(s: string) { return s.replace(/[&<>"']/g, c => ({ '&': '&amp
 
 async function execute() {
   selectPanel('terminal');
+  if (compactLayout()) document.body.classList.remove('panel-collapsed');
   const panel = document.getElementById('panelBody')!;
-  panel.innerHTML = '<span class="muted">› funo run\n  Проверяю типы и создаю Java…</span>';
+  panel.innerHTML = `<span class="muted">› ${desktopToolsAvailable ? 'funo run' : 'funo check'}\n  Проверяю типы и создаю Java…</span>`;
   try {
     const minecraft = project.kind.startsWith('minecraft');
+    if (!desktopToolsAvailable) {
+      const result = await transpileSource(editor.getValue(), minecraft);
+      diagnostics = result.diagnostics;
+      setDiagnostics(editor.getModel()!, diagnostics);
+      document.getElementById('problemCount')!.textContent = String(diagnostics.length);
+      document.getElementById('errorStatus')!.textContent = `× ${diagnostics.filter(item => item.severity === 'error').length}   △ ${diagnostics.filter(item => item.severity === 'warning').length}`;
+      if (result.success) {
+        (window as any).__lastJava = result.generated_java;
+        panel.innerHTML = `<span class="success">✓ Синтаксис Funo проверен</span>\n<span class="muted">Java-предпросмотр готов · ${result.elapsed_ms} мс\nЗапуск JDK/Gradle выполняется в desktop-версии.</span>`;
+        toast('Код проверен и сохранён на устройстве.');
+      } else {
+        panel.innerHTML = `<span class="error">Проверка нашла ошибку</span>\n${escapeHtml(result.stderr)}`;
+        if (diagnostics.length) renderFriendlyError(diagnostics[0]);
+      }
+      return;
+    }
     const native = !minecraft && compilerBackend !== 'jvm';
     const shouldRun = (document.getElementById('backendMode') as HTMLSelectElement | null)?.value !== 'build';
     if (minecraft) {
@@ -833,16 +893,31 @@ editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => void saveFi
 
 document.getElementById('showJava')!.onclick = async () => {
   let java = (window as any).__lastJava;
-  if (!java) { const result = await runCode(project.root, editor.getValue()); java = result.generated_java; (window as any).__lastJava = java; }
-  openModal('Java, созданный компилятором Funo', `<p>Этот код передаётся в <code>javac</code>. Исходный .fun остаётся главным файлом.</p><pre class="java-preview">${escapeHtml(java || 'Java-код пока недоступен.')}</pre><div class="modal-actions"><button class="primary" data-close>Готово</button></div>`);
+  if (!java) {
+    const result = desktopToolsAvailable
+      ? await runCode(project.root, editor.getValue())
+      : await transpileSource(editor.getValue(), project.kind.startsWith('minecraft'));
+    if (!result.success) { toast(result.stderr || 'Сначала исправьте ошибки Funo.', 'warn'); return; }
+    java = result.generated_java; (window as any).__lastJava = java;
+  }
+  openModal('Java, созданный компилятором Funo', `<p>${desktopToolsAvailable ? 'Этот код передаётся в <code>javac</code>.' : 'Android показывает результат встроенного компилятора без запуска <code>javac</code>.'} Исходный .fun остаётся главным файлом.</p><pre class="java-preview">${escapeHtml(java || 'Java-код пока недоступен.')}</pre><div class="modal-actions"><button class="primary" data-close>Готово</button></div>`);
 };
 
-function selectPanel(panel: 'terminal' | 'problems' | 'output') { currentPanel = panel; document.querySelectorAll<HTMLElement>('.panel-tab').forEach(x => x.classList.toggle('active', x.dataset.panel === panel)); renderPanel(); }
+function selectPanel(panel: 'terminal' | 'problems' | 'output') {
+  currentPanel = panel;
+  if (compactLayout()) document.body.classList.remove('panel-collapsed');
+  document.querySelectorAll<HTMLElement>('.panel-tab').forEach(x => x.classList.toggle('active', x.dataset.panel === panel));
+  renderPanel();
+}
 document.querySelectorAll<HTMLElement>('.panel-tab').forEach(x => x.onclick = () => selectPanel(x.dataset.panel as any));
+document.getElementById('collapsePanel')!.onclick = () => {
+  document.body.classList.toggle('panel-collapsed');
+  window.setTimeout(() => editor.layout(), 180);
+};
 function renderPanel() {
   const body = document.getElementById('panelBody')!;
   if (currentPanel === 'problems') body.innerHTML = diagnostics.length ? diagnostics.map(d => `<button class="problem-line" data-line="${d.line}"><span class="${d.severity}">●</span> ${escapeHtml(d.title)} <em>[${d.code}] строка ${d.line}</em></button>`).join('') : '<span class="muted">Проблем не обнаружено.</span>';
-  else if (currentPanel === 'output') body.innerHTML = '<span class="muted">Funo Language Server\nОфициальный реестр: vanyachickenganidanya-lgtm/funo_libsOFFICAL\nJVM backend: готов</span>';
+  else if (currentPanel === 'output') body.innerHTML = `<span class="muted">Funo Language Server\nОфициальный реестр: vanyachickenganidanya-lgtm/funo_libsOFFICAL\n${desktopToolsAvailable ? 'JVM backend: готов' : 'Android: локальная проверка и Java-предпросмотр'}</span>`;
   document.querySelectorAll<HTMLElement>('.problem-line').forEach(x => x.onclick = () => { editor.revealLineInCenter(Number(x.dataset.line)); editor.setPosition({ lineNumber: Number(x.dataset.line), column: 1 }); editor.focus(); });
 }
 document.getElementById('clearPanel')!.onclick = () => document.getElementById('panelBody')!.innerHTML = '';
@@ -863,9 +938,12 @@ function updateProjectUI() {
 }
 
 async function showOnboarding() {
-  const path = await getPathStatus().catch(() => ({ installed: false, path_contains_bin: false, bin_dir: '', launcher: 'funo' }));
+  const path = desktopToolsAvailable
+    ? await getPathStatus().catch(() => ({ installed: false, path_contains_bin: false, bin_dir: '', launcher: 'funo' }))
+    : { installed: false, path_contains_bin: false, bin_dir: '', launcher: 'funo' };
   const beginnerDefault = settings.installer_beginner_choice ?? settings.beginner;
-  openModal('Добро пожаловать в Funo Studio', `<div class="onboarding"><div class="onboarding-mark">F</div><p>Настроим Studio перед первым проектом. Оба решения позже можно изменить в настройках.</p><section><h3>1. Как вы хотите учиться?</h3><label class="choice-card"><input type="radio" name="experience" value="novice" ${beginnerDefault ? 'checked' : ''}><span><b>Я новичок</b><small>Больше объяснений и интерактивный путь из пяти программ</small></span></label><label class="choice-card"><input type="radio" name="experience" value="pro" ${beginnerDefault ? '' : 'checked'}><span><b>Профессиональный режим</b><small>Компактные ошибки, minimap и меньше подсказок</small></span></label></section><section><h3>2. Команда в терминале</h3><label class="choice-card"><input type="checkbox" id="onboardingPath" ${path.installed ? 'checked disabled' : 'checked'}><span><b>${path.installed ? 'Funo уже добавлен в PATH' : 'Добавить Funo в пользовательский PATH'}</b><small>Команда <code>funo</code> станет доступна в новых терминалах. Права администратора не нужны.</small></span></label></section><div class="modal-actions"><button class="primary big" id="finishOnboarding">Начать работу</button></div></div>`);
+  const pathStep = desktopToolsAvailable ? `<section><h3>2. Команда в терминале</h3><label class="choice-card"><input type="checkbox" id="onboardingPath" ${path.installed ? 'checked disabled' : 'checked'}><span><b>${path.installed ? 'Funo уже добавлен в PATH' : 'Добавить Funo в пользовательский PATH'}</b><small>Команда <code>funo</code> станет доступна в новых терминалах. Права администратора не нужны.</small></span></label></section>` : `<section class="mobile-welcome"><h3>Android-режим</h3><p>Исходники хранятся на устройстве. Здесь доступны редактор, проверка Funo, Java-предпросмотр, обучение и каталоги.</p></section>`;
+  openModal('Добро пожаловать в Funo Studio', `<div class="onboarding"><div class="onboarding-mark">F</div><p>Настроим Studio перед первым проектом. Режим обучения позже можно изменить в настройках.</p><section><h3>1. Как вы хотите учиться?</h3><label class="choice-card"><input type="radio" name="experience" value="novice" ${beginnerDefault ? 'checked' : ''}><span><b>Я новичок</b><small>Больше объяснений и интерактивный путь из пяти программ</small></span></label><label class="choice-card"><input type="radio" name="experience" value="pro" ${beginnerDefault ? '' : 'checked'}><span><b>Профессиональный режим</b><small>Компактные ошибки и меньше подсказок</small></span></label></section>${pathStep}<div class="modal-actions"><button class="primary big" id="finishOnboarding">Начать работу</button></div></div>`);
   document.getElementById('modal')!.classList.add('onboarding-modal');
   document.querySelector<HTMLElement>('#modal > header > button')!.classList.add('hidden');
   document.getElementById('finishOnboarding')!.onclick = async () => {
@@ -873,7 +951,8 @@ async function showOnboarding() {
     const novice = (document.querySelector<HTMLInputElement>('input[name="experience"]:checked')?.value || 'novice') === 'novice';
     settings.beginner = novice; settings.onboarding_completed = true; settings.compiler_backend = compilerBackend;
     await saveSettings(settings); setMode(novice ? 'novice' : 'pro');
-    if (!path.installed && (document.getElementById('onboardingPath') as HTMLInputElement).checked) {
+    const pathChoice = document.getElementById('onboardingPath') as HTMLInputElement | null;
+    if (desktopToolsAvailable && !path.installed && pathChoice?.checked) {
       try { await installPath(); toast('Команда funo добавлена в PATH. Откройте новый терминал.'); }
       catch (error) { toast(`PATH можно настроить позже: ${String(error)}`, 'warn'); }
     }
@@ -882,7 +961,15 @@ async function showOnboarding() {
   };
 }
 
-document.getElementById('commandCenter')!.onclick = () => openModal('Команды Funo', `<div class="command-list"><button data-close onclick="document.getElementById('topRun').click()">${icon('play')} Запустить текущий файл <kbd>Ctrl Enter</kbd></button><button data-close>${icon('package')} Открыть библиотеки</button><button data-close>${icon('cube')} Создать Minecraft-мод</button><button data-close>${icon('book')} Открыть вики</button></div>`);
+document.getElementById('commandCenter')!.onclick = () => {
+  openModal('Команды Funo', `<div class="command-list"><button data-command="run">${icon(desktopToolsAvailable ? 'play' : 'check')} ${desktopToolsAvailable ? 'Запустить' : 'Проверить'} текущий файл <kbd>Ctrl Enter</kbd></button><button data-command="packages">${icon('package')} Открыть библиотеки</button><button data-command="minecraft">${icon('cube')} Создать Minecraft-мод</button><button data-command="wiki">${icon('book')} Открыть вики</button></div>`);
+  document.querySelectorAll<HTMLElement>('[data-command]').forEach(button => button.onclick = () => {
+    document.getElementById('modalLayer')!.classList.add('hidden');
+    const command = button.dataset.command!;
+    if (command === 'run') void execute();
+    else selectView(command);
+  });
+};
 
 async function init() {
   try {

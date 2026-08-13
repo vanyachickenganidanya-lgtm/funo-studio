@@ -94,6 +94,16 @@ export type RegistryResponse = {
 };
 
 const isTauri = () => '__TAURI_INTERNALS__' in window;
+const isAndroid = () => /Android/i.test(navigator.userAgent);
+
+export const runtimePlatform = Object.freeze({
+  tauri: isTauri(),
+  android: isAndroid(),
+  mobile: isAndroid()
+});
+
+/** Commands that need a system JDK, Gradle, compiler, PATH or subprocess. */
+export const desktopToolsAvailable = runtimePlatform.tauri && !runtimePlatform.android;
 
 const demoCode = `fun fib(n: int) -> int = if n < 2 then n else fib(n - 1) + fib(n - 2)
 
@@ -109,6 +119,42 @@ fun main() {
     }
     return(200)
 }`;
+
+const localProjectKey = 'funo-local-project-v1';
+
+function defaultLocalProject(): Project {
+  return {
+    root: runtimePlatform.android ? 'android-local' : 'browser-preview',
+    name: 'Мой первый проект',
+    kind: 'console',
+    directories: ['src'],
+    hidden_paths: [],
+    files: [
+      { path: 'main.fun', content: demoCode },
+      { path: 'funo.toml', content: '[project]\nname = "my-first-project"\ntarget = "jvm-21"\nsuccess_code = 200' },
+      { path: 'src/minecraft.fun', content: 'use minecraft.fabric\n\nmod "hello_funo" {\n    on server_start {\n        broadcast("Сервер готов!")\n    }\n\n    on player_join(player) {\n        tell("Добро пожаловать!")\n    }\n}' }
+    ]
+  };
+}
+
+function loadLocalProject(): Project {
+  try {
+    const stored = JSON.parse(localStorage.getItem(localProjectKey) || 'null') as Project | null;
+    if (stored?.files?.length) return stored;
+    // Keep projects created by older browser previews.
+    const legacyCode = localStorage.getItem('funo-browser-code');
+    const project = defaultLocalProject();
+    if (legacyCode) project.files[0].content = legacyCode;
+    return project;
+  } catch {
+    return defaultLocalProject();
+  }
+}
+
+function saveLocalProject(project: Project): Project {
+  localStorage.setItem(localProjectKey, JSON.stringify(project));
+  return project;
+}
 
 function browserDiagnostics(source: string): Diagnostic[] {
   const typo = /\b(printn|pritnln|printl)\b/.exec(source);
@@ -134,21 +180,17 @@ function browserDiagnostics(source: string): Diagnostic[] {
 }
 
 export async function ensureProject(): Promise<Project> {
-  if (isTauri()) return invoke<Project>('ensure_demo_project');
-  const content = localStorage.getItem('funo-browser-code') || demoCode;
-  return {
-    root: 'browser-preview', name: 'Мой первый проект', kind: 'console', directories: ['src'], hidden_paths: [],
-    files: [
-      { path: 'main.fun', content },
-      { path: 'funo.toml', content: '[project]\nname = "my-first-project"\ntarget = "jvm-21"\nsuccess_code = 200' },
-      { path: 'src/minecraft.fun', content: 'use minecraft.fabric\n\nmod "hello_funo" {\n    on server_start {\n        broadcast("Сервер готов!")\n    }\n\n    on player_join(player) {\n        tell("Добро пожаловать!")\n    }\n}' }
-    ]
-  };
+  if (desktopToolsAvailable) return invoke<Project>('ensure_demo_project');
+  return loadLocalProject();
 }
 
 export async function saveFile(root: string, path: string, content: string): Promise<void> {
-  if (isTauri()) return invoke('write_project_file', { projectRoot: root, relativePath: path, content });
-  if (path === 'main.fun') localStorage.setItem('funo-browser-code', content);
+  if (desktopToolsAvailable) return invoke('write_project_file', { projectRoot: root, relativePath: path, content });
+  const project = loadLocalProject();
+  const existing = project.files.find(file => file.path === path);
+  if (existing) existing.content = content;
+  else project.files.push({ path, content });
+  saveLocalProject(project);
 }
 
 export async function checkCode(source: string): Promise<Diagnostic[]> {
@@ -156,8 +198,24 @@ export async function checkCode(source: string): Promise<Diagnostic[]> {
   return browserDiagnostics(source);
 }
 
+export async function transpileSource(source: string, minecraft = false): Promise<BuildResult> {
+  if (isTauri()) return invoke<BuildResult>('transpile_source', { source, minecraft });
+  const diagnostics = browserDiagnostics(source);
+  return {
+    success: diagnostics.length === 0,
+    stdout: '',
+    stderr: diagnostics[0]?.message || '',
+    generated_java: minecraft
+      ? '// Предпросмотр Minecraft Java доступен в Android APK и desktop-версии.'
+      : '// Предпросмотр Java доступен в Android APK и desktop-версии.',
+    elapsed_ms: 0,
+    diagnostics
+  };
+}
+
 export async function runCode(root: string, source: string): Promise<BuildResult> {
-  if (isTauri()) return invoke<BuildResult>('compile_and_run', { projectRoot: root, source, classpath: [] });
+  if (desktopToolsAvailable) return invoke<BuildResult>('compile_and_run', { projectRoot: root, source, classpath: [] });
+  if (runtimePlatform.android) throw new Error('Запуск JVM недоступен на Android. Проверка синтаксиса и предпросмотр Java работают без JDK.');
   const diagnostics = browserDiagnostics(source);
   if (diagnostics.length) return { success: false, stdout: '', stderr: diagnostics[0].message, generated_java: '', elapsed_ms: 0, diagnostics };
   const n = Number(/println\s*\(\s*fib\((\d+)\)\s*\)/.exec(source)?.[1] || 10);
@@ -170,7 +228,8 @@ export async function runCode(root: string, source: string): Promise<BuildResult
 }
 
 export async function buildMinecraft(root: string, source: string): Promise<BuildResult> {
-  if (isTauri()) return invoke<BuildResult>('build_minecraft', { projectRoot: root, source });
+  if (desktopToolsAvailable) return invoke<BuildResult>('build_minecraft', { projectRoot: root, source });
+  if (runtimePlatform.android) throw new Error('Gradle-сборка Minecraft-мода доступна в desktop-версии. На Android можно редактировать и проверять исходник.');
   const diagnostics = browserDiagnostics(source);
   return {
     success: diagnostics.length === 0,
@@ -192,7 +251,8 @@ export async function fetchRegistry(): Promise<RegistryResponse> {
 }
 
 export async function installPackage(root: string, pkg: RegistryPackage, allowUnsafe: boolean): Promise<string> {
-  if (isTauri()) return invoke<string>('install_package', { projectRoot: root, package: pkg, allowUnsafe });
+  if (desktopToolsAvailable) return invoke<string>('install_package', { projectRoot: root, package: pkg, allowUnsafe });
+  if (runtimePlatform.android) throw new Error('Установка JVM-библиотек доступна в desktop-версии; каталог на Android работает только для просмотра.');
   return `Предпросмотр: ${pkg.name} будет установлен в desktop-приложении.`;
 }
 
@@ -222,7 +282,8 @@ export async function minecraftToolchainStatus(
   loader: string,
   checkUpdates = false
 ): Promise<MinecraftToolchainStatus> {
-  if (isTauri()) return invoke<MinecraftToolchainStatus>('minecraft_toolchain_status', { projectRoot, minecraftVersion, loader, checkUpdates });
+  if (desktopToolsAvailable) return invoke<MinecraftToolchainStatus>('minecraft_toolchain_status', { projectRoot, minecraftVersion, loader, checkUpdates });
+  if (runtimePlatform.android) throw new Error('JDK и Gradle не устанавливаются в Android APK. Соберите мод в desktop-версии Funo Studio.');
   const requiredJava = minecraftJava(minecraftVersion);
   const reserveBytes = 30 * 1024 ** 3;
   const jdkSize = 220 * 1024 ** 2;
@@ -244,7 +305,8 @@ export async function installMinecraftToolchain(
   loader: string,
   destinationRoot: string
 ): Promise<MinecraftToolchainStatus> {
-  if (isTauri()) return invoke<MinecraftToolchainStatus>('install_minecraft_toolchain', { projectRoot, minecraftVersion, loader, destinationRoot });
+  if (desktopToolsAvailable) return invoke<MinecraftToolchainStatus>('install_minecraft_toolchain', { projectRoot, minecraftVersion, loader, destinationRoot });
+  if (runtimePlatform.android) throw new Error('Установка JDK и Gradle недоступна на Android.');
   const status = await minecraftToolchainStatus(projectRoot, minecraftVersion, loader);
   status.ready = true;
   status.message = 'Предпросмотр: JDK и Gradle установлены.';
@@ -259,15 +321,16 @@ export async function createMinecraftProject(
   loader: string,
   minecraftVersion: string
 ): Promise<Project> {
-  if (isTauri()) return invoke<Project>('create_minecraft_project', { name, modId, loader, minecraftVersion });
+  if (desktopToolsAvailable) return invoke<Project>('create_minecraft_project', { name, modId, loader, minecraftVersion });
   const safeName = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  return {
-    root: 'browser-preview', name, kind: `minecraft-${loader}`, directories: [], hidden_paths: [],
+  const project: Project = {
+    root: runtimePlatform.android ? 'android-local' : 'browser-preview', name, kind: `minecraft-${loader}`, directories: [], hidden_paths: [],
     files: [
       { path: 'main.fun', content: `use minecraft.${loader}\n\nmod "${modId}" {\n    on start {\n        log("Мод ${safeName} загружен")\n    }\n\n    on server_start {\n        broadcast("Сервер Minecraft ${minecraftVersion} готов!")\n    }\n\n    on player_join(player) {\n        tell("Добро пожаловать!")\n    }\n}` },
       { path: 'funo.toml', content: `[project]\nname = "${safeName}"\nkind = "minecraft-${loader}"\ntarget = "jvm-${minecraftJava(minecraftVersion)}"\n\n[minecraft]\nmod_id = "${modId}"\nloader = "${loader}"\nversion = "${minecraftVersion}"\n` }
     ]
   };
+  return saveLocalProject(project);
 }
 
 export type StudioSettings = {
@@ -349,54 +412,56 @@ const defaultSettings: StudioSettings = {
 };
 
 export async function loadSettings(): Promise<StudioSettings> {
-  if (isTauri()) return invoke<StudioSettings>('get_settings');
+  if (desktopToolsAvailable) return invoke<StudioSettings>('get_settings');
   try { return { ...defaultSettings, ...JSON.parse(localStorage.getItem('funo-settings') || '{}') }; }
   catch { return { ...defaultSettings }; }
 }
 
 export async function saveSettings(value: StudioSettings): Promise<StudioSettings> {
-  if (isTauri()) return invoke<StudioSettings>('save_settings', { value });
+  if (desktopToolsAvailable) return invoke<StudioSettings>('save_settings', { value });
   localStorage.setItem('funo-settings', JSON.stringify(value));
   return value;
 }
 
 export async function getPathStatus(): Promise<PathStatus> {
-  if (isTauri()) return invoke<PathStatus>('path_status');
+  if (desktopToolsAvailable) return invoke<PathStatus>('path_status');
+  if (runtimePlatform.android) throw new Error('PATH и консольная команда funo не используются на Android.');
   return { installed: false, path_contains_bin: false, bin_dir: '~/.local/bin', launcher: '~/.local/bin/funo' };
 }
 
 export async function installPath(): Promise<PathStatus> {
-  if (isTauri()) return invoke<PathStatus>('install_path');
+  if (desktopToolsAvailable) return invoke<PathStatus>('install_path');
   throw new Error('Установка PATH доступна в desktop-версии.');
 }
 
 export async function uninstallPath(): Promise<PathStatus> {
-  if (isTauri()) return invoke<PathStatus>('uninstall_path');
+  if (desktopToolsAvailable) return invoke<PathStatus>('uninstall_path');
   throw new Error('Управление PATH доступно в desktop-версии.');
 }
 
 export async function createFolder(root: string, path: string): Promise<Project> {
-  if (isTauri()) return invoke<Project>('create_project_folder', { projectRoot: root, relativePath: path });
-  const project = await ensureProject();
+  if (desktopToolsAvailable) return invoke<Project>('create_project_folder', { projectRoot: root, relativePath: path });
+  const project = loadLocalProject();
   if (!project.directories.includes(path)) project.directories.push(path);
-  return project;
+  return saveLocalProject(project);
 }
 
 export async function reloadProject(root: string): Promise<Project> {
-  if (isTauri()) return invoke<Project>('reload_project', { projectRoot: root });
-  return ensureProject();
+  if (desktopToolsAvailable) return invoke<Project>('reload_project', { projectRoot: root });
+  return loadLocalProject();
 }
 
 export async function setPathHidden(root: string, path: string, hidden: boolean): Promise<Project> {
-  if (isTauri()) return invoke<Project>('set_project_path_hidden', { projectRoot: root, relativePath: path, hidden });
-  const project = await ensureProject();
+  if (desktopToolsAvailable) return invoke<Project>('set_project_path_hidden', { projectRoot: root, relativePath: path, hidden });
+  const project = loadLocalProject();
   project.hidden_paths = hidden ? [...new Set([...project.hidden_paths, path])] : project.hidden_paths.filter(value => value !== path);
-  return project;
+  return saveLocalProject(project);
 }
 
 export async function runBackend(root: string, source: string, target: string, run: boolean): Promise<BuildResult> {
   if (target === 'jvm') return runCode(root, source);
-  if (isTauri()) return invoke<BuildResult>('build_backend', { projectRoot: root, source, target, run });
+  if (desktopToolsAvailable) return invoke<BuildResult>('build_backend', { projectRoot: root, source, target, run });
+  if (runtimePlatform.android) throw new Error(`Backend ${target} требует системный компилятор и доступен в desktop-версии.`);
   return {
     success: true,
     stdout: `Предпросмотр backend ${target}: desktop-версия создаст и ${run ? 'запустит' : 'соберёт'} программу.`,
@@ -405,28 +470,29 @@ export async function runBackend(root: string, source: string, target: string, r
 }
 
 export async function listInstances(): Promise<MinecraftInstance[]> {
-  if (isTauri()) return invoke<MinecraftInstance[]>('list_instances');
+  if (desktopToolsAvailable) return invoke<MinecraftInstance[]>('list_instances');
   return JSON.parse(localStorage.getItem('funo-instances') || '[]');
 }
 
 export async function createInstance(name: string, root: string, version: string, loader: string): Promise<MinecraftInstance> {
-  if (isTauri()) return invoke<MinecraftInstance>('create_instance', { name, projectRoot: root, minecraftVersion: version, loader });
+  if (desktopToolsAvailable) return invoke<MinecraftInstance>('create_instance', { name, projectRoot: root, minecraftVersion: version, loader });
   const instance: MinecraftInstance = { id: `preview-${Date.now()}`, name, project_root: root, minecraft_version: version, loader, game_dir: `preview/${name}`, jvm_args: '-Xmx2G', game_args: '', launch_task: 'runClient', mods: [] };
   const values = await listInstances(); values.push(instance); localStorage.setItem('funo-instances', JSON.stringify(values)); return instance;
 }
 
 export async function updateInstance(instance: MinecraftInstance): Promise<MinecraftInstance> {
-  if (isTauri()) return invoke<MinecraftInstance>('update_instance', { instance });
+  if (desktopToolsAvailable) return invoke<MinecraftInstance>('update_instance', { instance });
   const values = (await listInstances()).map(value => value.id === instance.id ? instance : value); localStorage.setItem('funo-instances', JSON.stringify(values)); return instance;
 }
 
 export async function deleteInstance(id: string): Promise<void> {
-  if (isTauri()) return invoke('delete_instance', { id });
+  if (desktopToolsAvailable) return invoke('delete_instance', { id });
   localStorage.setItem('funo-instances', JSON.stringify((await listInstances()).filter(value => value.id !== id)));
 }
 
 export async function launchInstance(id: string): Promise<string> {
-  if (isTauri()) return invoke<string>('launch_instance', { id });
+  if (desktopToolsAvailable) return invoke<string>('launch_instance', { id });
+  if (runtimePlatform.android) throw new Error('Запуск Minecraft требует desktop JDK/Gradle и недоступен на Android.');
   return `Предпросмотр запуска ${id}. В desktop-версии будет выполнен изолированный runClient.`;
 }
 
@@ -436,49 +502,52 @@ export async function searchModrinth(query: string, loader: string, version: str
 }
 
 export async function installModrinth(instanceId: string, projectId: string): Promise<MinecraftInstance> {
-  if (isTauri()) return invoke<MinecraftInstance>('install_modrinth', { instanceId, projectId });
+  if (desktopToolsAvailable) return invoke<MinecraftInstance>('install_modrinth', { instanceId, projectId });
   throw new Error('Загрузка Modrinth доступна в desktop-версии.');
 }
 
 export async function removeInstanceMod(instanceId: string, projectId: string): Promise<MinecraftInstance> {
-  if (isTauri()) return invoke<MinecraftInstance>('remove_instance_mod', { instanceId, projectId });
+  if (desktopToolsAvailable) return invoke<MinecraftInstance>('remove_instance_mod', { instanceId, projectId });
   throw new Error('Управление модами доступно в desktop-версии.');
 }
 
 export async function createPlugin(parent: string, name: string, language: string, kind = 'tooling'): Promise<PluginProject> {
-  if (isTauri()) return invoke<PluginProject>('create_plugin', { parent, name, language, kind });
+  if (desktopToolsAvailable) return invoke<PluginProject>('create_plugin', { parent, name, language, kind });
+  if (runtimePlatform.android) throw new Error('Plugin SDK требует системные компиляторы и доступен в desktop-версии.');
   return { id: name.toLowerCase().replace(/\W+/g, '-'), name, language, kind, root: `${parent}/${name}`, repository_hint: 'https://github.com/your-name/your-plugin' };
 }
 
 export async function checkPlugin(root: string): Promise<PluginCheck> {
-  if (isTauri()) return invoke<PluginCheck>('check_plugin', { root });
+  if (desktopToolsAvailable) return invoke<PluginCheck>('check_plugin', { root });
+  if (runtimePlatform.android) throw new Error('Проверка плагинов доступна в desktop-версии.');
   return { success: true, summary: 'Проверка доступна в desktop-версии', output: root };
 }
 
 export async function installPlugin(root: string): Promise<PluginProject> {
-  if (isTauri()) return invoke<PluginProject>('install_plugin', { root });
+  if (desktopToolsAvailable) return invoke<PluginProject>('install_plugin', { root });
   throw new Error('Установка плагина доступна в desktop-версии.');
 }
 
 export async function listPlugins(): Promise<PluginProject[]> {
-  if (isTauri()) return invoke<PluginProject[]>('list_plugins');
+  if (desktopToolsAvailable) return invoke<PluginProject[]>('list_plugins');
   return [];
 }
 
 export async function beginMicrosoftAuth(): Promise<MicrosoftAuthChallenge> {
-  if (isTauri()) return invoke<MicrosoftAuthChallenge>('begin_microsoft_auth');
-  throw new Error('Microsoft-вход доступен в desktop-версии.');
+  if (desktopToolsAvailable) return invoke<MicrosoftAuthChallenge>('begin_microsoft_auth');
+  throw new Error('Microsoft-вход и запуск Minecraft доступны в desktop-версии.');
 }
 
 export async function completeMicrosoftAuth(deviceCode: string): Promise<MinecraftAccount> {
-  return invoke<MinecraftAccount>('complete_microsoft_auth', { deviceCode });
+  if (desktopToolsAvailable) return invoke<MinecraftAccount>('complete_microsoft_auth', { deviceCode });
+  throw new Error('Microsoft-вход доступен в desktop-версии.');
 }
 
 export async function currentMicrosoftAccount(): Promise<MinecraftAccount | null> {
-  if (isTauri()) return invoke<MinecraftAccount | null>('current_microsoft_account');
+  if (desktopToolsAvailable) return invoke<MinecraftAccount | null>('current_microsoft_account');
   return null;
 }
 
 export async function logoutMicrosoft(): Promise<void> {
-  if (isTauri()) return invoke('logout_microsoft');
+  if (desktopToolsAvailable) return invoke('logout_microsoft');
 }

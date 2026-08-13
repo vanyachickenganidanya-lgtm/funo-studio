@@ -1,6 +1,9 @@
 use std::{env, fs, path::PathBuf};
 
 fn ensure_sidecar_placeholder() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        return;
+    }
     let Ok(target) = env::var("TARGET") else {
         return;
     };

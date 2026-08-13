@@ -290,6 +290,23 @@ npm run tauri:build
 
 GitHub Actions собирает Windows `.msi`/`.exe` и отдельный `funo.exe`, который можно добавить в PATH командой `funo setup`.
 
+## Android APK
+
+Funo Studio также собирается как телефонный Tauri 2 APK. На Android доступны редактор, локальное автосохранение полного проекта, файлы и папки, проверка Funo встроенным Rust-компилятором, Java-предпросмотр, source-only мастер Minecraft, вики, обучение и сетевые каталоги. Интерфейс использует нижнюю навигацию, выдвижной проводник, touch-элементы и safe-area отступы.
+
+JDK/Gradle, запуск JVM и Minecraft, системные compiler backend-ы, установка `.jar`/модов, PATH, Microsoft-вход лаунчера и Plugin SDK требуют desktop-среды и в APK скрыты или явно отклоняются.
+
+```bash
+# После установки Android SDK/NDK, JDK 17 и Rust Android targets
+npm ci
+npm run android:init
+npm run android:build:debug   # устанавливаемый debug-signed universal APK
+```
+
+APK появляется в `src-tauri/gen/android/app/build/outputs/apk/`. Workflow **Build Funo Studio Android APK** публикует готовый artifact `funo-studio-android-apk` для каждого push в `main`/`arena/**`, pull request и ручного запуска.
+
+Подробные требования, ограничения и инструкция установки: **[docs/android.md](docs/android.md)**.
+
 ### Linux (Debian/Ubuntu)
 
 ```bash

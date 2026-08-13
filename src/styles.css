@@ -457,3 +457,210 @@ input, select { height: 30px; border: 1px solid #3c3c3c; background: #252526; pa
   .editor-wrap.markdown-split #editor { inset: 0 0 50% 0; }
   .markdown-preview { inset: 50% 0 0; border-left: 0; border-top: 1px solid #3a3a3a; }
 }
+
+/* Android and compact phone shell */
+.drawer-scrim, .sidebar-close, .android-chip { display: none; }
+.android-chip, .platform-pill {
+  padding: 3px 7px; border: 1px solid #376b5a; border-radius: 999px;
+  color: #75d9b6; background: rgba(54,201,149,.08); font-size: 9px; font-weight: 700; letter-spacing: .08em;
+}
+.android-app .android-chip { display: inline-flex; align-items: center; }
+.mobile-notice {
+  margin: 18px 0; padding: 12px 14px; display: grid; gap: 4px;
+  border: 1px solid #315345; border-left: 3px solid #36c995; background: rgba(54,201,149,.065);
+}
+.mobile-notice b { color: #b8ead8; }
+.mobile-notice span { color: #93a99f; font-size: 11px; line-height: 1.55; }
+.mobile-capabilities { display: grid; gap: 7px; margin-top: 15px; color: #aab5b0; }
+.mobile-capabilities span { padding: 7px 9px; border: 1px solid #333; background: #202020; }
+.mobile-capability-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 10px; }
+.mobile-capability-grid article { display: flex; gap: 10px; padding: 13px; border: 1px solid #353535; background: #222; }
+.mobile-capability-grid article > svg { flex: 0 0 auto; color: #72ddb7; }
+.mobile-capability-grid article > span { display: grid; gap: 4px; }
+.mobile-capability-grid b { color: #ddd; }
+.mobile-capability-grid small { color: #888; line-height: 1.5; }
+.settings-mobile { margin: 5px 0 10px; }
+.mobile-welcome { padding: 11px 13px; border-left: 3px solid #36c995; background: rgba(54,201,149,.06); }
+.mobile-welcome h3 { margin-top: 0; }
+.mobile-welcome p { margin-bottom: 0; color: #9aaa9f; line-height: 1.55; }
+
+.android-app .shell {
+  grid-template-rows: calc(35px + env(safe-area-inset-top, 0px)) minmax(0,1fr) calc(22px + env(safe-area-inset-bottom, 0px));
+}
+.android-app .titlebar { padding-top: env(safe-area-inset-top, 0px); }
+.android-app .statusbar { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+@media (max-width: 650px) {
+  :root { font-size: 14px; --mobile-nav: calc(58px + env(safe-area-inset-bottom, 0px)); }
+  html, body, #app { height: 100dvh; min-height: 0; overscroll-behavior: none; }
+  body { touch-action: manipulation; }
+  .shell, .android-app .shell {
+    grid-template-rows: calc(48px + env(safe-area-inset-top, 0px)) minmax(0,1fr);
+    min-height: 0;
+  }
+  .titlebar {
+    min-width: 0; height: auto; gap: 7px; padding: env(safe-area-inset-top, 0px) 8px 0;
+  }
+  .menu, .title-actions { display: none; }
+  .app-mark { flex: 0 0 30px; width: 30px; height: 30px; border-radius: 8px; font-size: 13px; }
+  .command-center {
+    position: static; min-width: 0; width: auto; height: 34px; flex: 1; transform: none;
+    justify-content: flex-start; padding: 0 10px; overflow: hidden;
+  }
+  .command-center span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .command-center kbd { display: none; }
+  .android-chip { flex: 0 0 auto; }
+
+  .workbench {
+    position: relative; min-height: 0; grid-template-columns: minmax(0,1fr);
+    padding-bottom: var(--mobile-nav);
+  }
+  .activitybar {
+    position: fixed; z-index: 95; left: 0; right: 0; bottom: 0;
+    width: 100%; height: var(--mobile-nav); padding: 0 2px env(safe-area-inset-bottom, 0px);
+    flex-direction: row; align-items: stretch; border: 0; border-top: 1px solid #353535;
+    background: rgba(24,24,24,.98); box-shadow: 0 -5px 18px rgba(0,0,0,.28);
+  }
+  .activitybar > div { min-width: 0; flex: 1; display: flex; }
+  .activity {
+    min-width: 42px; width: auto; height: 57px; flex: 1; border-radius: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .activity.bottom { width: 46px; flex: 0 0 46px; margin: 0; }
+  .activity svg { width: 23px; height: 23px; }
+  .activity.active { color: #fff; background: rgba(255,255,255,.035); }
+  .activity.active::before { left: 9px; right: 9px; top: auto; bottom: 0; width: auto; height: 2px; }
+  .activity .badge { right: 6px; bottom: 8px; }
+
+  .sidebar {
+    position: fixed; z-index: 110;
+    display: grid; top: calc(48px + env(safe-area-inset-top, 0px)); bottom: var(--mobile-nav); left: 0;
+    width: min(86vw, 340px); grid-template-rows: 48px minmax(0,1fr);
+    border-right: 1px solid #454545; box-shadow: 12px 0 35px rgba(0,0,0,.48);
+    transform: translateX(-105%); visibility: hidden;
+    transition: transform .18s ease, visibility 0s linear .18s;
+  }
+  .sidebar-open .sidebar { transform: translateX(0); visibility: visible; transition-delay: 0s; }
+  .sidebar-title { padding-left: 15px; font-size: 12px; }
+  .sidebar-title > div { align-items: center; }
+  .tiny { width: 42px; height: 42px; }
+  .sidebar-close { display: grid; }
+  .sidebar-content { overscroll-behavior: contain; }
+  .drawer-scrim {
+    position: fixed; z-index: 105; display: block;
+    inset: calc(48px + env(safe-area-inset-top, 0px)) 0 var(--mobile-nav) 0;
+    padding: 0; background: rgba(0,0,0,.54); opacity: 0; visibility: hidden;
+    transition: opacity .18s, visibility 0s linear .18s;
+  }
+  .sidebar-open .drawer-scrim { opacity: 1; visibility: visible; transition-delay: 0s; }
+  .file-row, .folder-row { min-height: 44px; height: 44px; font-size: 13px; }
+  .tree-title, .section-line { min-height: 38px; height: 38px; }
+  .tree-entry > .tree-hide, .folder-row > .tree-hide {
+    top: 4px; right: 5px; width: 36px; height: 36px; display: grid; background: transparent;
+  }
+  .tree-entry > .file-row { padding-right: 44px; }
+  .search-side, .run-side { padding: 12px; }
+  .search-side > input, input:not([type="checkbox"]):not([type="radio"]), select { min-height: 44px; font-size: 16px; }
+  input[type="checkbox"], input[type="radio"] { min-height: 20px; width: 20px; height: 20px; }
+  .search-hit { min-height: 50px; padding: 9px; }
+  .primary, .secondary, .danger { min-height: 44px; padding: 8px 13px; }
+
+  .editor-group {
+    grid-column: 1; min-width: 0;
+    grid-template-rows: 43px 25px minmax(80px,1fr) clamp(130px,30dvh,205px);
+  }
+  .panel-collapsed .editor-group { grid-template-rows: 43px 25px minmax(80px,1fr) 37px; }
+  .editor-tabs { min-width: 0; }
+  .editor-tab { min-width: 0; max-width: none; flex: 1; height: 43px; }
+  .editor-tab > svg { display: none; }
+  .editor-actions { flex: 0 0 auto; padding-right: 2px; }
+  .editor-actions button { width: 42px; height: 42px; }
+  .breadcrumbs { padding: 0 9px; font-size: 10px; }
+  .panel { grid-template-rows: 36px minmax(0,1fr); overflow: hidden; }
+  .panel-collapsed .panel { grid-template-rows: 36px 0; }
+  .panel-head { gap: 12px; padding: 0 7px; overflow: hidden; }
+  .panel-tab { height: 36px; font-size: 10px; white-space: nowrap; }
+  .panel-tab[data-panel="output"] { display: none; }
+  .panel-actions { display: flex; }
+  .panel-actions button { width: 38px; height: 36px; }
+  #collapsePanel { transition: transform .18s; }
+  .panel-collapsed #collapsePanel { transform: rotate(180deg); }
+  .panel-body { padding: 8px 10px 16px; font-size: 11px; line-height: 18px; }
+  .statusbar { display: none; }
+
+  .friendly-card {
+    top: 8px; right: 7px; width: calc(100% - 14px); max-height: calc(100% - 16px);
+    padding: 11px 12px; overflow: auto;
+  }
+  .friend-body > div { flex-wrap: wrap; }
+  .friend-body > div button { flex: 1; }
+  .surface { overscroll-behavior: contain; }
+  .surface-page, .wiki-page, .launcher-page, .toolchains-page {
+    width: calc(100% - 24px); padding: 22px 0 calc(34px + env(safe-area-inset-bottom, 0px));
+  }
+  .page-hero { gap: 14px; padding-bottom: 16px; }
+  .page-hero h1, .doc-content h1 { font-size: 23px; }
+  .hero-actions { width: 100%; }
+  .hero-actions > button { flex: 1; }
+  .package-toolbar, .trust-info { align-items: stretch; flex-direction: column; }
+  .surface-search { min-height: 44px; }
+  .package-card { padding: 12px; }
+  .package-main p { min-height: 0; }
+  .trust-info { gap: 10px; }
+  .trust-info h3 { margin: 0; }
+  .wizard-grid { grid-template-columns: minmax(0,1fr); gap: 22px; }
+  .loader-options { grid-template-columns: 1fr; }
+  .loader { min-height: 58px; }
+  .code-preview { min-width: 0; overflow: hidden; }
+  .code-preview pre { min-height: 0; padding: 14px; overflow: auto; font-size: 11px; line-height: 20px; }
+  .what-created { grid-template-columns: 1fr; }
+  .what-created b { grid-column: 1; }
+  .learn-strip { align-items: flex-start; padding: 13px; }
+  .wiki-page { display: block; }
+  .doc-nav {
+    position: static; max-height: 205px; margin-bottom: 22px; padding-bottom: 10px;
+    overflow: auto; border-bottom: 1px solid #333;
+  }
+  .doc-link { min-height: 44px; }
+  .doc-content pre { max-width: 100%; overflow: auto; padding: 13px; }
+  .settings-list { gap: 16px; margin-top: 18px; }
+  .settings-list label { min-height: 66px; }
+  .mobile-capability-grid { grid-template-columns: 1fr; }
+  .lesson-track { gap: 8px; }
+  .lesson-step { min-height: 40px; }
+  .lesson-work { padding: 15px; gap: 14px; }
+  .learning-progress { width: 74px; height: 74px; }
+  .markdown-preview { padding: 15px 15px 40px; }
+
+  .modal-layer {
+    place-items: end center; padding: max(10px, env(safe-area-inset-top, 0px)) 0 0;
+  }
+  .modal {
+    width: 100%; max-height: calc(100dvh - max(10px, env(safe-area-inset-top, 0px)));
+    border-width: 1px 0 0; border-radius: 12px 12px 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .modal > header { min-height: 52px; height: 52px; }
+  .modal > header button { width: 44px; height: 44px; }
+  .modal > main { padding: 15px; }
+  .modal-actions { align-items: stretch; flex-direction: column-reverse; }
+  .modal-actions > button { width: 100%; }
+  .java-preview { max-height: 52dvh; font-size: 10px; line-height: 17px; }
+  .choice-card { min-height: 68px; }
+  .toast {
+    right: 10px; bottom: calc(var(--mobile-nav) + 9px); width: calc(100% - 20px);
+  }
+}
+
+@media (max-width: 370px) {
+  .android-chip { display: none !important; }
+  .command-center { padding: 0 8px; }
+  .panel-head { gap: 8px; }
+  .panel-tab { font-size: 9px; }
+  .activity { min-width: 39px; }
+  .activity.bottom { width: 42px; flex-basis: 42px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .drawer-scrim, .toast, #collapsePanel { transition: none !important; }
+}
