@@ -20,20 +20,18 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NDK_VERSION: 27.3.13750724
+  NDK_VERSION: 26.3.11579264
   CARGO_INCREMENTAL: 0
 
 jobs:
   build-android:
     name: Universal debug-signed APK
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 60
 
     steps:
-      - name: Download source and embedded launcher
+      - name: Download source
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -58,7 +56,7 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" \
-            "platforms;android-37" \
+            "platforms;android-36" \
             "build-tools;36.0.0" \
             "ndk;$NDK_VERSION"
           echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
@@ -72,21 +70,6 @@ jobs:
 
       - name: Initialize generated Android project
         run: npm run android:init
-
-      - name: Enable launcher dependency repository
-        shell: python
-        run: |
-          from pathlib import Path
-          candidates = [Path("src-tauri/gen/android/settings.gradle.kts"), Path("src-tauri/gen/android/settings.gradle")]
-          path = next((item for item in candidates if item.exists()), None)
-          if path is None:
-              raise SystemExit("Generated Android settings file was not found")
-          value = path.read_text()
-          if "jitpack.io" not in value:
-              marker = "mavenCentral()"
-              addition = 'maven("https://jitpack.io")' if path.suffix == ".kts" else "maven { url 'https://jitpack.io' }"
-              value = value.replace(marker, marker + "\n        " + addition, 1)
-              path.write_text(value)
 
       - name: Build installable universal APK
         run: npm run android:build:debug
