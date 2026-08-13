@@ -146,6 +146,15 @@ try {
   if (process.argv.includes("--debug")) args.push("--debug");
   await run(executable("tauri"), args);
 } catch (error) {
+  // `tauri android init/build` may refresh the lockfile in CI. Keep its small
+  // dependency delta in the accessible annotation when the job fails.
+  if (process.env.GITHUB_ACTIONS) {
+    try {
+      await run("git", ["diff", "--", "src-tauri/Cargo.lock"]);
+    } catch {
+      // The original Android error remains authoritative.
+    }
+  }
   emitGithubError(error);
   console.error(error);
   process.exitCode = 1;

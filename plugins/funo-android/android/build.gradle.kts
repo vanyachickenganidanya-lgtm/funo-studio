@@ -5,9 +5,16 @@ plugins {
 
 val amethystRoot = project.file("../../../vendor/amethyst")
 val amethystApp = amethystRoot.resolve("app_pojavlauncher")
-val buildAmethystComponents by tasks.registering(GradleBuild::class) {
-    dir = amethystRoot
-    tasks = listOf(
+val buildAmethystComponents by tasks.registering(Exec::class) {
+    workingDir = amethystRoot
+    val wrapper = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+        amethystRoot.resolve("gradlew.bat")
+    } else {
+        amethystRoot.resolve("gradlew")
+    }
+    commandLine(
+        wrapper.absolutePath,
+        "--no-daemon",
         ":forge_installer:jar",
         ":arc_dns_injector:jar",
         ":methods_injector_agent:jar",
