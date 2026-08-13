@@ -75,11 +75,7 @@ async function ensureAndroidSdk() {
     `sdkmanager${isWindows ? ".bat" : ""}`,
   );
   if (!(await exists(sdkManager))) return;
-  await run(sdkManager, [
-    "platforms;android-37",
-    "build-tools;37.0.0",
-    "ndk;27.3.13750724",
-  ]);
+  await run(sdkManager, ["platforms;android-36", "build-tools;36.0.0", "ndk;27.3.13750724"]);
 }
 
 async function addJitPackRepository() {

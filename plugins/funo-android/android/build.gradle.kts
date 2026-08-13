@@ -20,7 +20,9 @@ tasks.matching { it.name == "preBuild" }.configureEach {
 
 android {
     namespace = "net.kdt.pojavlaunch"
-    compileSdk = 37
+    // API 36 is the newest platform available on GitHub-hosted Android SDKs;
+    // Amethyst's launcher sources do not require API 37 symbols.
+    compileSdk = 36
     ndkVersion = "27.3.13750724"
 
     defaultConfig {
