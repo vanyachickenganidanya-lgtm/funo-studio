@@ -46,7 +46,7 @@ CI создаёт debug-signed APK: он устанавливается на у�
 - Node.js 20+;
 - Rust stable;
 - JDK 17;
-- Android SDK с platform/build-tools 35;
+- Android SDK с platform/build-tools 36;
 - Android NDK `26.3.11579264` (r26d);
 - переменная `NDK_HOME` или `ANDROID_NDK_HOME` с путём к NDK.
 
