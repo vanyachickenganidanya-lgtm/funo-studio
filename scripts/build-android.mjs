@@ -79,26 +79,40 @@ async function ensureAndroidSdk() {
 }
 
 async function addJitPackRepository() {
+  const androidRoot = path.join(root, "src-tauri", "gen", "android");
   const candidates = [
-    path.join(root, "src-tauri", "gen", "android", "settings.gradle.kts"),
-    path.join(root, "src-tauri", "gen", "android", "settings.gradle"),
+    path.join(androidRoot, "settings.gradle.kts"),
+    path.join(androidRoot, "settings.gradle"),
+    path.join(androidRoot, "tauri.settings.gradle.kts"),
+    path.join(androidRoot, "tauri.settings.gradle"),
   ];
-  const settings = (await Promise.all(candidates.map(async (file) => ((await exists(file)) ? file : null))))
-    .find(Boolean);
-  if (!settings) throw new Error("Tauri Android settings.gradle не найден; сначала выполните npm run android:init");
-
-  const original = await readFile(settings, "utf8");
-  if (/jitpack\.io/i.test(original)) return;
-  const kotlin = settings.endsWith(".kts");
-  const repository = kotlin
-    ? 'maven(url = "https://jitpack.io")'
-    : 'maven { url "https://jitpack.io" }';
-  const updated = original.replace(/mavenCentral\(\)/g, `mavenCentral()\n        ${repository}`);
-  if (updated === original) {
-    throw new Error(`Не удалось добавить JitPack в ${path.relative(root, settings)}`);
+  const existing = (await Promise.all(
+    candidates.map(async (file) => ((await exists(file)) ? file : null)),
+  )).filter(Boolean);
+  if (!existing.length) {
+    throw new Error("Tauri Android settings.gradle не найден; сначала выполните npm run android:init");
   }
-  await writeFile(settings, updated);
-  console.log(`Добавлен JitPack в ${path.relative(root, settings)}`);
+
+  let repositoryBlockFound = false;
+  for (const settings of existing) {
+    const original = await readFile(settings, "utf8");
+    if (/jitpack\.io/i.test(original)) {
+      repositoryBlockFound = true;
+      continue;
+    }
+    const kotlin = settings.endsWith(".kts");
+    const repository = kotlin
+      ? 'maven(url = "https://jitpack.io")'
+      : 'maven { url "https://jitpack.io" }';
+    const updated = original.replace(/mavenCentral\(\)/g, `mavenCentral()\n        ${repository}`);
+    if (updated === original) continue;
+    await writeFile(settings, updated);
+    repositoryBlockFound = true;
+    console.log(`Добавлен JitPack в ${path.relative(root, settings)}`);
+  }
+  if (!repositoryBlockFound) {
+    throw new Error(`Не удалось найти repositories в: ${existing.map((file) => path.relative(root, file)).join(", ")}`);
+  }
 }
 
 function emitGithubError(error) {
