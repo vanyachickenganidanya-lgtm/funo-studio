@@ -2,7 +2,7 @@
 
 Эти файлы предназначены для репозитория:
 
-`https://github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL`
+`https://github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL/tree/main`
 
 ## Как опубликовать первый пакет
 

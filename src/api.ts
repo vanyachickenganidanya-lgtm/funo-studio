@@ -245,13 +245,59 @@ export async function buildMinecraft(root: string, source: string): Promise<Buil
   };
 }
 
-export async function fetchRegistry(): Promise<RegistryResponse> {
-  const repo = 'https://github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL';
-  if (isTauri()) return invoke<RegistryResponse>('fetch_registry', { repository: repo });
+const officialRegistryRepository = 'https://github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL/tree/main';
+const officialRegistryIndex = 'https://raw.githubusercontent.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL/main/index.json';
+
+function registryPackage(value: unknown): RegistryPackage | null {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as Record<string, unknown>;
+  if (
+    typeof item.id !== 'string' || !/^[a-z0-9][a-z0-9._-]{1,80}$/.test(item.id) ||
+    typeof item.name !== 'string' || typeof item.version !== 'string' ||
+    typeof item.description !== 'string' ||
+    !['funo', 'java', 'minecraft'].includes(String(item.kind)) ||
+    typeof item.source_url !== 'string' || !item.source_url.startsWith('https://') ||
+    typeof item.sha256 !== 'string'
+  ) return null;
   return {
-    source: repo, status: 'empty',
-    message: 'Репозиторий подключён. Добавьте index.json по шаблону из проекта.', packages: []
+    id: item.id,
+    name: item.name,
+    version: item.version,
+    description: item.description,
+    kind: item.kind as RegistryPackage['kind'],
+    source_url: item.source_url,
+    sha256: item.sha256,
+    verified: item.verified === true && /^[a-f\d]{64}$/i.test(item.sha256),
+    author: typeof item.author === 'string' ? item.author : undefined
   };
+}
+
+export async function fetchRegistry(): Promise<RegistryResponse> {
+  if (isTauri()) {
+    return invoke<RegistryResponse>('fetch_registry', { repository: officialRegistryRepository });
+  }
+  try {
+    const response = await fetch(officialRegistryIndex, { cache: 'no-store' });
+    if (response.status === 404) return {
+      source: officialRegistryRepository, status: 'empty',
+      message: 'В официальной ветке пока нет index.json.', packages: []
+    };
+    if (!response.ok) throw new Error(`GitHub вернул ${response.status}`);
+    const index = await response.json() as { schema?: unknown; packages?: unknown };
+    if (index.schema !== 1 || !Array.isArray(index.packages)) {
+      throw new Error('index.json имеет неподдерживаемый формат');
+    }
+    const packages = index.packages.map(registryPackage).filter((item): item is RegistryPackage => item !== null);
+    return {
+      source: officialRegistryRepository, status: 'ready',
+      message: `Загружено пакетов: ${packages.length}`, packages
+    };
+  } catch (error) {
+    return {
+      source: officialRegistryRepository, status: 'offline',
+      message: `Не удалось загрузить официальный реестр: ${String(error)}`, packages: []
+    };
+  }
 }
 
 export async function installPackage(root: string, pkg: RegistryPackage, allowUnsafe: boolean): Promise<string> {

@@ -4,9 +4,9 @@
 
 Официальный реестр библиотек:
 
-**https://github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL**
+**https://github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL/tree/main**
 
-> Сейчас в официальном репозитории есть только `README.md`. Чтобы команды `funo pkg list/install` увидели пакеты, опубликуйте там `index.json` и папку `packages` из `registry-template/`.
+Studio и CLI читают `main/index.json`. Официальный каталог сейчас содержит семь проверенных пакетов Funo и Minecraft; установка скачивает закреплённый `.funpkg` и сверяет его SHA-256.
 
 ## Что умеет Funo
 

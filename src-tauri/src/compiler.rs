@@ -1096,18 +1096,58 @@ fn safe_project_root(project_root: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+fn collect_funo_source_paths(directory: &std::path::Path, paths: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_funo_source_paths(&path, paths);
+        } else if path.extension().and_then(|value| value.to_str()) == Some("fun") {
+            paths.push(path);
+        }
+    }
+}
+
+fn sorted_directories(directory: &std::path::Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<_> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    paths.sort();
+    paths
+}
+
 fn installed_funo_sources(root: &std::path::Path) -> String {
     let packages = root.join(".funo").join("packages");
     let mut result = String::new();
-    let Ok(ids) = fs::read_dir(packages) else {
-        return result;
-    };
-    for id in ids.flatten().filter(|entry| entry.path().is_dir()) {
-        let Ok(versions) = fs::read_dir(id.path()) else {
-            continue;
-        };
-        for version in versions.flatten().filter(|entry| entry.path().is_dir()) {
-            let archive_path = version.path().join("package.funpkg");
+    for id in sorted_directories(&packages) {
+        for version in sorted_directories(&id) {
+            // Current official .funpkg files are deterministic ZIP archives.
+            // The installer extracts every source under src/ before the package
+            // becomes visible. Reading those files also keeps legacy JSON
+            // packages working because they are extracted to the same folder.
+            let mut source_paths = Vec::new();
+            collect_funo_source_paths(&version.join("src"), &mut source_paths);
+            source_paths.sort();
+            if !source_paths.is_empty() {
+                for path in source_paths {
+                    if let Ok(source) = fs::read_to_string(path) {
+                        result.push_str(&source);
+                        result.push_str("\n\n");
+                    }
+                }
+                continue;
+            }
+
+            // Compatibility with packages installed by early Studio builds,
+            // before extraction to src/ was introduced.
+            let archive_path = version.join("package.funpkg");
             let Ok(bytes) = fs::read(&archive_path) else {
                 continue;
             };
@@ -1658,6 +1698,26 @@ mod tests {
         let diagnostics = check_source("fun main() {\n printn(1)\n}");
         assert_eq!(diagnostics[0].code, "FUN001");
         assert_eq!(diagnostics[0].replacement.as_deref(), Some("println"));
+    }
+
+    #[test]
+    fn reads_sources_extracted_from_official_zip_packages() {
+        let root = std::env::temp_dir().join(format!(
+            "funo-compiler-package-test-{}",
+            std::process::id()
+        ));
+        let source_directory = root
+            .join(".funo/packages/funo.hello/1.0.0/src");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&source_directory).unwrap();
+        fs::write(
+            source_directory.join("hello.fun"),
+            "fun official_greet(name) = \"Hello, \" + name\n",
+        )
+        .unwrap();
+        let sources = installed_funo_sources(&root);
+        assert!(sources.contains("fun official_greet(name)"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

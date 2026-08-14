@@ -340,9 +340,9 @@ async function renderPackages() {
   const result = await fetchRegistry().catch(err => ({ source: '', status: 'offline' as const, message: String(err), packages: [] }));
   const cards = result.packages.length ? result.packages.map(packageCard).join('') : `
     <div class="empty-registry">
-      <div class="empty-icon">${icon('package')}</div><h2>Репозиторий подключён</h2>
-      <p>Пока в нём нет <code>index.json</code>. Добавьте файл по готовому шаблону <b>registry-template/index.json</b>.</p>
-      <a href="${result.source}" target="_blank" rel="noreferrer">Открыть ваш GitHub ↗</a>
+      <div class="empty-icon">${icon('package')}</div><h2>${result.status === 'offline' ? 'Реестр недоступен' : 'В реестре пока нет пакетов'}</h2>
+      <p>${escapeHtml(result.message)}</p>
+      <a href="${escapeHtml(result.source)}" target="_blank" rel="noreferrer">Открыть официальный GitHub ↗</a>
     </div>`;
   showSurface(`<div class="surface-page packages-page">
     <div class="page-hero"><div><span class="overline">FUNO PACK</span><h1>Библиотеки</h1><p>Проверенные пакеты из вашего GitHub, Java .jar и инструменты для Minecraft.</p></div><div class="hero-actions">${desktopToolsAvailable ? '<button class="primary" id="addOwnPlugin">+ Добавить своё</button>' : ''}<button class="secondary" id="refreshRegistry">${icon('refresh')} Обновить</button></div></div>
@@ -394,7 +394,8 @@ async function renderPlugins() {
 }
 
 function packageCard(p: RegistryPackage) {
-  return `<article class="package-card" data-search="${`${p.name} ${p.id} ${p.description}`.toLowerCase()}"><div class="package-icon">${p.kind === 'minecraft' ? icon('cube') : p.kind === 'java' ? icon('java') : icon('package')}</div><div class="package-main"><h3>${p.name}${p.verified ? `<span class="verified" title="SHA-256 указан">${icon('check')}</span>` : ''}</h3><code>${p.id}@${p.version}</code><p>${p.description}</p><footer><span>${p.kind}</span><button class="${desktopToolsAvailable ? 'primary' : 'secondary'} small install-package" data-id="${p.id}" ${desktopToolsAvailable ? '' : 'disabled'}>${desktopToolsAvailable ? 'Установить' : 'Desktop'}</button></footer></div></article>`;
+  const search = `${p.name} ${p.id} ${p.description}`.toLowerCase();
+  return `<article class="package-card" data-search="${escapeHtml(search)}"><div class="package-icon">${p.kind === 'minecraft' ? icon('cube') : p.kind === 'java' ? icon('java') : icon('package')}</div><div class="package-main"><h3>${escapeHtml(p.name)}${p.verified ? `<span class="verified" title="SHA-256 указан">${icon('check')}</span>` : ''}</h3><code>${escapeHtml(p.id)}@${escapeHtml(p.version)}</code><p>${escapeHtml(p.description)}</p><footer><span>${escapeHtml(p.kind)}</span><button class="${desktopToolsAvailable ? 'primary' : 'secondary'} small install-package" data-id="${escapeHtml(p.id)}" ${desktopToolsAvailable ? '' : 'disabled'}>${desktopToolsAvailable ? 'Установить' : 'Desktop'}</button></footer></div></article>`;
 }
 
 function formatBytes(bytes: number) {
@@ -689,7 +690,7 @@ const wiki = [
   ['Minecraft', 'Предметы и рецепты', `<h1>Предметы и рецепты</h1><p><code>define_item</code> создаёт именованный Funo-предмет на основе существующего item ID, а craft-команды генерируют version-aware JSON-рецепты.</p><pre>on server_start {\n    define_item("ruby", "minecraft:emerald", "Рубин")\n    craft_shapeless("ruby_block", "minecraft:emerald_block", 1,\n        "minecraft:emerald", "minecraft:emerald")\n}\n\non player_join(player) {\n    give_custom("ruby", 3)\n}</pre><div class="doc-note">Для 1.20.5+ Funo использует <code>result.id</code>, а для 1.21+ — папку <code>recipe</code>.</div>`],
   ['Minecraft', 'Мобы и AI', `<h1>Мобы и AI</h1><p>Создавайте сущностей, включайте или отключайте их AI и меняйте атрибуты ближайшего моба выбранного типа.</p><pre>on server_start {\n    spawn_mob("minecraft:zombie", 0, 80, 0, "Страж Funo")\n    set_mob_ai("minecraft:zombie", true)\n    mob_attribute("minecraft:zombie", "minecraft:generic.max_health", 40.0)\n}</pre>`],
   ['Minecraft', 'Сборки и Modrinth', `<h1>Независимые сборки</h1><p>В «Minecraft → Лаунчер и сборки» каждая сборка получает отдельные <code>mods</code>, <code>config</code> и игровой каталог. Аргументы JVM, игры и задача Gradle редактируются отдельно.</p><p>Поиск Modrinth учитывает загрузчик и версию выбранной сборки. Повторная установка обновляет существующий проект мода вместо создания копии.</p><div class="doc-note">Для custom loader-а укажите его ID при создании сборки и подходящую Gradle-задачу запуска.</div>`],
-  ['Пакеты', 'Официальный реестр', `<h1>Официальный реестр</h1><p>Пакеты загружаются только по HTTPS, сверяются по SHA-256 и записываются в <code>funo.lock</code>.</p><pre>funo pkg list\nfuno pkg search minecraft\nfuno pkg install funo.hello</pre><p>Источник: <code>github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL</code>. Для реестра нужен <code>index.json</code>; готовый пример находится в <code>registry-template</code>.</p>`],
+  ['Пакеты', 'Официальный реестр', `<h1>Официальный реестр</h1><p>Пакеты загружаются только по HTTPS, сверяются по SHA-256 и записываются в <code>funo.lock</code>.</p><pre>funo pkg list\nfuno pkg search minecraft\nfuno pkg install funo.hello</pre><p>Источник: <code>github.com/vanyachickenganidanya-lgtm/funo_libsOFFICAL/tree/main</code>. Studio загружает актуальный <code>main/index.json</code>; минимальный пример формата находится в <code>registry-template</code>.</p>`],
   ['Плагины', 'Свой репозиторий', `<h1>Свой плагин</h1><p>Нажмите «Библиотеки → Добавить своё», выберите Rust, C++ 17, TypeScript, JavaScript или Python. Studio создаст Git-репозиторий с <code>funo.plugin.json</code>, ABI-примером, тестом и README.</p><ol><li>Измените файлы плагина в проводнике.</li><li>Запустите тест — Cargo, CMake, npm или Python.</li><li>Успешно проверенный плагин устанавливается в локальный каталог Studio.</li></ol><div class="doc-note">Секреты GitHub не нужны: репозиторий обычный, и вы сами выбираете, где его публиковать.</div>`]
 ];
 
